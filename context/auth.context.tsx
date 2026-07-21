@@ -42,7 +42,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let isMounted = true;
 
     supabase.auth.getSession().then(({ data }) => {
-      if (!isMounted) return;
+      if (!isMounted) {
+        return;
+      }
       setSession(data.session);
       setLoading(false);
     });
@@ -77,7 +79,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .eq('id', userId)
       .single()
       .then(({ data, error }) => {
-        if (isCancelled) return;
+        if (isCancelled) {
+          return;
+        }
         if (error) {
           console.warn('[auth] failed to load profile:', error.message);
           setProfile(null);
