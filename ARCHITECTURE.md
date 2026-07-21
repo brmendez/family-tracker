@@ -1,0 +1,137 @@
+# Family Tracker — Architecture & Ticket Roadmap
+
+Product Owner: Brian. Delivery pipeline: Mobile Architect (tickets) → Mobile Senior Developer (implementation) → Code Reviewer.
+
+## Stack (locked, do not revisit)
+- Expo + TypeScript, **iOS only** for now (`react-native-maps`)
+- Supabase: auth, Postgres, realtime subscriptions
+- Expo Go for v1 through most of v3; **dev build required starting FT-18** (background geofencing) — see the v3 table for the exact line
+- No monorepo, no web app
+
+## Folder structure
+```
+app/                # Expo Router — routes only, no business logic
+  _layout.tsx
+  (auth)/            # sign-in, sign-up (FT-2)
+  (app)/
+    map/             # FT-4
+    groups/          # v2
+    history/         # v5
+
+features/            # one folder per feature: components/, hooks/, types/
+  auth/  map/  groups/  geofencing/  visibility/  history/  activity/
+
+shared/               # only things used by 2+ features
+  components/  hooks/  types/
+
+context/
+  auth.context.tsx     # AuthProvider (FT-2)
+  groups.context.tsx   # GroupsProvider (v2) — active group selection, per-group switcher (see #4)
+
+lib/
+  supabase.ts   # Supabase client (FT-1)
+  constants.ts  # location thresholds etc.
+```
+
+## Decisions confirmed by PO
+
+| # | Question | Answer |
+|---|---|---|
+| 1 | Group permissions | Any member can invite. Owner can remove members. Only owner can rename/delete the group. |
+| 2 | Last member leaves a group | Auto-delete the group (cascades geofences, invites, visibility overrides for that group). |
+| 3 | Invite mechanism | PO wants "anyone can be invited, signs up via a link." **Implementation still pending final confirmation**: a true tap-to-join link needs a deferred-deep-link service (e.g. Branch.io) to survive an App Store install round-trip — extra dependency, not needed while the app isn't published. Simpler alternative proposed: invite by email, no token, app auto-matches pending invites to the signed-up email at signup — same end-user feel, no new dependency. **Not blocking v1 — only needed starting v2.** |
+| 4 | Multi-group map view | Per-group filter/switcher, not a combined view. `GroupsProvider` holds `activeGroupId`. |
+| 5 | "All day" invisibility duration | Until local midnight (device timezone, computed server-side via RPC to avoid clock skew). |
+| 6 | Global invisibility toggle | Single global flag, checked **before** any per-group logic — not a convenience action that writes to every group. |
+| 7 | v5 playback scope | Any group member can play back **any other member's** historical route within a shared group — not self-only. Must respect v4's visibility windows *as they were at that historical time*. This means **v5 is blocked by v2 and v4, not just v1's schema.** |
+| 8 | v1 password reset | Out of scope for v1 (2 known users, self-serviceable via Supabase dashboard). In scope starting v2, once groups introduce users outside the household. |
+| 9 | v6 speed/duration thresholds | **Deferred** — revisit when v6 starts. |
+
+## Locked schema consequence (from #6 + #7 combined)
+Answer #7 means "was this person hidden from this group at 3pm last Tuesday" has to be answerable later, not just "are they hidden right now." A simple current-state flag that gets overwritten on every hide/unhide can't answer that. So **both the per-group visibility override (v4) and the global visibility flag (v4) must be event-sourced (append-only log of hide/unhide events)**, same pattern as `location_history` already uses, for the same reason. This is locked in for FT-19/FT-21 below — do not implement as a simple upsert row.
+
+---
+
+## V1 — Live Family Map
+*Just the PO and his wife, hardcoded, everyone sees everyone. No groups yet.*
+
+| Ticket | Description | Depends on | Status |
+|---|---|---|---|
+| FT-1 | Project scaffold: Expo Router migration, Supabase client (`lib/supabase.ts`), env vars, base folder structure | — | ✅ Done |
+| FT-2 | Auth — email/password sign up/sign in, `AuthProvider`, `profiles` table + signup trigger, session persistence | FT-1 | ⬜ Not started |
+| FT-3 | Foreground location permission flow (request, granted, denied + Settings deep link, ask-again) | FT-1 | ⬜ Not started |
+| FT-4 | Map screen showing your own location (local only, no backend write yet) | FT-3 | ⬜ Not started |
+| FT-5 | Write own location to `location_history` (append-only, includes `speed_mps`/`heading_deg` from day one — this is the schema decision v5/v6 depend on later) | FT-4, FT-2 | ⬜ Not started |
+| FT-6 | Realtime — show the other user's location, updates live via Supabase realtime | FT-5 | ⬜ Not started |
+
+**v1 is done once FT-6 ships** — that's the actual "we see each other" milestone.
+
+---
+
+## V2 — Groups & Membership *(blocked by v1)*
+
+| Ticket | Description | Depends on | Status |
+|---|---|---|---|
+| FT-7 | Schema: `groups` + `group_members` (generic, no "family" type — just a suggested default name). Role enforcement per #1. Auto-delete-on-last-leave trigger per #2. | v1 | ⬜ |
+| FT-8 | Create a group, name it (default suggestion "Family") | FT-7 | ⬜ |
+| FT-9 | Invite to group — mechanism per #3, final call still pending | FT-7, FT-8 | ⬜ |
+| FT-10 | Accept/decline invite | FT-9 | ⬜ |
+| FT-11 | Leave group (auto-delete on last member per #2) | FT-7 | ⬜ |
+| FT-12 | Group-scoped location visibility — rewrites `location_history` RLS to require shared group membership; map uses per-group switcher per #4 | FT-6, FT-7 | ⬜ |
+| FT-New | Password reset flow (in scope starting here per #8) | FT-2 | ⬜ |
+
+---
+
+## V3 — Geofencing *(blocked by v2)*
+
+| Ticket | Description | Depends on | Status |
+|---|---|---|---|
+| FT-13 | Schema: `geofences` + `geofence_events`, group-scoped | FT-7 | ⬜ |
+| FT-14 | Create/manage geofence (foreground, Expo Go) | FT-13, FT-12 | ⬜ |
+| FT-15 | Push notification infrastructure (shared primitive — reused later by v6) | FT-2 | ⬜ |
+| FT-16 | Foreground geofence detection + in-app alert | FT-14, FT-6 | ⬜ |
+| FT-17 | Push notification on entry/exit (server-triggered webhook) | FT-15, FT-16 | ⬜ |
+| **FT-18** | **Background geofence detection — this is the dev-build line.** Everything above is Expo Go; everything from here on requires a dev build. | FT-16, FT-17 | ⬜ |
+
+---
+
+## V4 — Per-Group Visibility Controls *(blocked by v2)*
+
+| Ticket | Description | Depends on | Status |
+|---|---|---|---|
+| FT-19 | Schema: `group_visibility_overrides` — **event-sourced/append-only** (see locked consequence above), RLS layered on top of FT-12 | FT-12 | ⬜ |
+| FT-20 | Go invisible to a group (1h/2h/4h/all day = local midnight/indefinite) | FT-19 | ⬜ |
+| FT-21 | Global invisible toggle — separate event-sourced table, checked before per-group logic per #6 | FT-19 | ⬜ |
+
+---
+
+## V5 — Journey History / Playback *(blocked by v1's schema AND v2 AND v4 — per #7)*
+
+| Ticket | Description | Depends on | Status |
+|---|---|---|---|
+| FT-22 | Journey history list, date range picker, member selector (any group member, not just self, per #7) | FT-5, FT-12 | ⬜ |
+| FT-23 | Route playback animation — redacts any time range where the viewed member was hidden (global or per-group) at that historical timestamp | FT-22, FT-19, FT-21 | ⬜ |
+
+---
+
+## V6 — Speed & Activity Detection *(blocked by v3)*
+
+Building against **Option A (GPS-derived, Expo Go-compatible)** — do not commit to native activity recognition (Option B) without re-checking the library landscape at build time.
+
+| Ticket | Description | Depends on | Status |
+|---|---|---|---|
+| FT-25 | Schema: speed/heading columns (likely already present from FT-5) + `activity_alerts` table | FT-5 | ⬜ |
+| FT-26 | Derive/display activity state (stopped/walking/driving) from GPS history | FT-25 | ⬜ |
+| FT-27 | Dangerous-activity flag + notification (reuses FT-15's delivery mechanism). **Thresholds deferred per #9.** | FT-26, FT-15/FT-17 | ⬜ |
+
+---
+
+## Still open
+- **#3**: final call on invite mechanism (email-match-at-signup vs. link with third-party deep-link service) — needed before FT-9, not before.
+- **#9**: speed/duration thresholds for the dangerous-activity flag — needed before FT-27, not before.
+
+## Other flags worth remembering later
+- `location_history` has no retention/pruning policy — revisit before v5 ships at scale.
+- iOS background-location App Store review requires clear in-UX justification (FT-18).
+- iOS geofence region monitoring has a practical accuracy floor (~100–150m) — small zones like "front porch" may be unreliable (FT-14).
+- Android is explicitly out of scope for the entire roadmap; would need separate handling if ever added.
