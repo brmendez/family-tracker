@@ -11,6 +11,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+
 import { useAuth } from '../../context/auth.context';
 
 export default function SignInScreen() {

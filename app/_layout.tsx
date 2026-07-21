@@ -2,6 +2,7 @@
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
+
 import { AuthProvider, useAuth } from '../context/auth.context';
 
 function RootNavigator() {

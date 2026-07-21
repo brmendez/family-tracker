@@ -8,6 +8,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+
 import { supabase } from '../lib/supabase';
 
 export type Profile = {
@@ -45,6 +46,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!isMounted) {
         return;
       }
+
       setSession(data.session);
       setLoading(false);
     });
@@ -87,6 +89,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setProfile(null);
           return;
         }
+
         setProfile(data);
       });
 
@@ -100,6 +103,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     password: string,
   ): Promise<AuthResult> => {
     const { error } = await supabase.auth.signUp({ email, password });
+
     return { error: error?.message ?? null };
   };
 
@@ -111,6 +115,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       email,
       password,
     });
+
     return { error: error?.message ?? null };
   };
 
@@ -139,5 +144,6 @@ export function useAuth(): AuthContextValue {
   if (!context) {
     throw new Error('useAuth must be used within an AuthProvider');
   }
+
   return context;
 }

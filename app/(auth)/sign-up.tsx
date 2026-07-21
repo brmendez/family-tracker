@@ -11,6 +11,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+
 import { useAuth } from '../../context/auth.context';
 
 const MIN_PASSWORD_LENGTH = 6;
