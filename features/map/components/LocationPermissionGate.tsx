@@ -19,7 +19,9 @@ type LocationPermissionGateProps = {
 // not-yet-determined (request flow), granted (renders children), or denied
 // (Settings deep link, since iOS won't show a fresh in-app prompt once
 // already denied).
-export function LocationPermissionGate({ children }: LocationPermissionGateProps) {
+export function LocationPermissionGate({
+  children,
+}: LocationPermissionGateProps) {
   const { status, requestPermission } = useLocationPermission();
 
   const handleOpenSettings = useCallback(() => {
@@ -53,12 +55,13 @@ export function LocationPermissionGate({ children }: LocationPermissionGateProps
     );
   }
 
+  // status === 'undetermined'
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Share your location</Text>
       <Text style={styles.body}>
-        Family Tracker uses your location to show it to your family group on
-        the map.
+        Family Tracker uses your location to show it to your family group on the
+        map.
       </Text>
       <Pressable style={styles.button} onPress={requestPermission}>
         <Text style={styles.buttonText}>Allow Location Access</Text>
