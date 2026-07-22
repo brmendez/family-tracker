@@ -5,7 +5,7 @@ Product Owner: Brian. Delivery pipeline: Mobile Architect (tickets) → Mobile S
 ## Stack (locked, do not revisit)
 - Expo + TypeScript, **iOS only** for now (`react-native-maps`)
 - Supabase: auth, Postgres, realtime subscriptions
-- Expo Go for v1 through most of v3; **dev build required starting FT-18** (background geofencing) — see the v3 table for the exact line
+- **Dev build required starting FT-4** (`react-native-maps` is a native module Expo Go doesn't bundle — this was locked in by the stack decision above, earlier than originally documented here). FT-1–FT-3 were Expo-Go-compatible in principle since they never rendered a map, but in practice this project moved to a dev build early due to an unrelated Expo Go/SDK version mismatch. Either way, from FT-4 on, a dev build is required regardless.
 - No monorepo, no web app
 
 ## Folder structure
@@ -60,7 +60,7 @@ Answer #7 means "was this person hidden from this group at 3pm last Tuesday" has
 | FT-1 | Project scaffold: Expo Router migration, Supabase client (`lib/supabase.ts`), env vars, base folder structure | — | ✅ Done |
 | FT-2 | Auth — email/password sign up/sign in, `AuthProvider`, `profiles` table + signup trigger, session persistence | FT-1 | ✅ Done |
 | FT-3 | Foreground location permission flow (request, granted, denied + Settings deep link, ask-again) | FT-1 | ✅ Done |
-| FT-4 | Map screen showing your own location (local only, no backend write yet) | FT-3 | ⬜ Not started |
+| FT-4 | Map screen showing your own location (local only, no backend write yet) | FT-3 | ✅ Done |
 | FT-5 | Write own location to `location_history` (append-only, includes `speed_mps`/`heading_deg` from day one — this is the schema decision v5/v6 depend on later) | FT-4, FT-2 | ⬜ Not started |
 | FT-6 | Realtime — show the other user's location, updates live via Supabase realtime | FT-5 | ⬜ Not started |
 
@@ -87,11 +87,11 @@ Answer #7 means "was this person hidden from this group at 3pm last Tuesday" has
 | Ticket | Description | Depends on | Status |
 |---|---|---|---|
 | FT-13 | Schema: `geofences` + `geofence_events`, group-scoped | FT-7 | ⬜ |
-| FT-14 | Create/manage geofence (foreground, Expo Go) | FT-13, FT-12 | ⬜ |
+| FT-14 | Create/manage geofence (foreground) | FT-13, FT-12 | ⬜ |
 | FT-15 | Push notification infrastructure (shared primitive — reused later by v6) | FT-2 | ⬜ |
 | FT-16 | Foreground geofence detection + in-app alert | FT-14, FT-6 | ⬜ |
 | FT-17 | Push notification on entry/exit (server-triggered webhook) | FT-15, FT-16 | ⬜ |
-| **FT-18** | **Background geofence detection — this is the dev-build line.** Everything above is Expo Go; everything from here on requires a dev build. | FT-16, FT-17 | ⬜ |
+| **FT-18** | **Background geofence detection.** Requires the "Always" location permission and background task registration — a bigger native/permissions lift than the dev build requirement itself, which actually started at FT-4. | FT-16, FT-17 | ⬜ |
 
 ---
 
@@ -116,7 +116,7 @@ Answer #7 means "was this person hidden from this group at 3pm last Tuesday" has
 
 ## V6 — Speed & Activity Detection *(blocked by v3)*
 
-Building against **Option A (GPS-derived, Expo Go-compatible)** — do not commit to native activity recognition (Option B) without re-checking the library landscape at build time.
+Building against **Option A (GPS-derived, no new native dependency)** — do not commit to native activity recognition (Option B) without re-checking the library landscape at build time.
 
 | Ticket | Description | Depends on | Status |
 |---|---|---|---|
@@ -135,3 +135,4 @@ Building against **Option A (GPS-derived, Expo Go-compatible)** — do not commi
 - iOS background-location App Store review requires clear in-UX justification (FT-18).
 - iOS geofence region monitoring has a practical accuracy floor (~100–150m) — small zones like "front porch" may be unreliable (FT-14).
 - Android is explicitly out of scope for the entire roadmap; would need separate handling if ever added.
+- **Future: avatar markers.** Eventual direction (not yet scoped to a ticket) is for both yourself and other group members to be represented on the map by profile picture, not a generic pin or the native blue dot — closer to a "chat bubble"/Life360-style avatar marker. This affects FT-4/FT-6 implementation choices now: use a plain `Marker` (customizable) for yourself rather than `MapView`'s `showsUserLocation` blue dot, even though the blue dot is simpler today, so the later upgrade to an avatar image is additive rather than a rework. `profiles.avatar_color` already exists as a placeholder for visual identity (FT-2) — a future `avatar_url` column is the natural next step whenever this gets scoped for real.
