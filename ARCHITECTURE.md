@@ -59,7 +59,7 @@ Answer #7 means "was this person hidden from this group at 3pm last Tuesday" has
 |---|---|---|---|
 | FT-1 | Project scaffold: Expo Router migration, Supabase client (`lib/supabase.ts`), env vars, base folder structure | — | ✅ Done |
 | FT-2 | Auth — email/password sign up/sign in, `AuthProvider`, `profiles` table + signup trigger, session persistence | FT-1 | ✅ Done |
-| FT-3 | Foreground location permission flow (request, granted, denied + Settings deep link, ask-again) | FT-1 | ⬜ Not started |
+| FT-3 | Foreground location permission flow (request, granted, denied + Settings deep link, ask-again) | FT-1 | ✅ Done |
 | FT-4 | Map screen showing your own location (local only, no backend write yet) | FT-3 | ⬜ Not started |
 | FT-5 | Write own location to `location_history` (append-only, includes `speed_mps`/`heading_deg` from day one — this is the schema decision v5/v6 depend on later) | FT-4, FT-2 | ⬜ Not started |
 | FT-6 | Realtime — show the other user's location, updates live via Supabase realtime | FT-5 | ⬜ Not started |

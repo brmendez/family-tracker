@@ -1,11 +1,17 @@
 // app/index.tsx
 import { StyleSheet, Text, View } from 'react-native';
 
+import { LocationPermissionGate } from '../features/map/components/LocationPermissionGate';
+
 export default function IndexScreen() {
   return (
-    <View style={styles.container}>
-      <Text style={styles.text}>Family Tracker</Text>
-    </View>
+    <LocationPermissionGate>
+      {/* Placeholder for the granted state — FT-4 replaces this with the
+          real map screen. */}
+      <View style={styles.container}>
+        <Text style={styles.text}>Location permission granted</Text>
+      </View>
+    </LocationPermissionGate>
   );
 }
 

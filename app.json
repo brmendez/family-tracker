@@ -8,7 +8,10 @@
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.anonymous.family-tracker"
+      "bundleIdentifier": "com.anonymous.family-tracker",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Family Tracker uses your location to show it to your family group on the map."
+      }
     },
     "android": {
       "adaptiveIcon": {
