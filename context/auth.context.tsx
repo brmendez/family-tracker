@@ -42,14 +42,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let isMounted = true;
 
-    supabase.auth.getSession().then(({ data }) => {
+    const restoreSession = async () => {
+      const { data } = await supabase.auth.getSession();
+
       if (!isMounted) {
         return;
       }
 
       setSession(data.session);
       setLoading(false);
-    });
+    };
+
+    restoreSession();
 
     const {
       data: { subscription },
@@ -75,23 +79,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Prevent the risk of calling setProfile(data) with a result from a previous user's query, or on an unmounted component
     let isCancelled = false;
 
-    supabase
-      .from('profiles')
-      .select('id, display_name, avatar_color, created_at')
-      .eq('id', userId)
-      .single()
-      .then(({ data, error }) => {
-        if (isCancelled) {
-          return;
-        }
-        if (error) {
-          console.warn('[auth] failed to load profile:', error.message);
-          setProfile(null);
-          return;
-        }
+    const loadProfile = async () => {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, display_name, avatar_color, created_at')
+        .eq('id', userId)
+        .single();
 
-        setProfile(data);
-      });
+      if (isCancelled) {
+        return;
+      }
+      if (error) {
+        console.warn('[auth] failed to load profile:', error.message);
+        setProfile(null);
+        return;
+      }
+
+      setProfile(data);
+    };
+
+    loadProfile();
 
     return () => {
       isCancelled = true;
