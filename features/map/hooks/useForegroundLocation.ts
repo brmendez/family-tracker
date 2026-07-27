@@ -27,21 +27,23 @@ export function useForegroundLocation(): UseForegroundLocationResult {
   useEffect(() => {
     let isMounted = true;
 
-    Location.watchPositionAsync(
-      {
-        accuracy: Location.LocationAccuracy.Balanced,
-        timeInterval: LOCATION_WATCH_TIME_INTERVAL_MS,
-        distanceInterval: LOCATION_WATCH_DISTANCE_INTERVAL_M,
-      },
-      (location) => {
-        if (!isMounted) {
-          return;
-        }
+    async function startWatching() {
+      try {
+        const subscription = await Location.watchPositionAsync(
+          {
+            accuracy: Location.LocationAccuracy.Balanced,
+            timeInterval: LOCATION_WATCH_TIME_INTERVAL_MS,
+            distanceInterval: LOCATION_WATCH_DISTANCE_INTERVAL_M,
+          },
+          (location) => {
+            if (!isMounted) {
+              return;
+            }
 
-        setCoords(location.coords);
-      },
-    )
-      .then((subscription) => {
+            setCoords(location.coords);
+          },
+        );
+
         if (!isMounted) {
           subscription.remove();
 
@@ -49,14 +51,16 @@ export function useForegroundLocation(): UseForegroundLocationResult {
         }
 
         subscriptionRef.current = subscription;
-      })
-      .catch((error: Error) => {
+      } catch (error) {
         if (!isMounted) {
           return;
         }
 
-        setErrorMessage(error.message);
-      });
+        setErrorMessage((error as Error).message);
+      }
+    }
+
+    startWatching();
 
     return () => {
       isMounted = false;
