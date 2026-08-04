@@ -61,7 +61,7 @@ Answer #7 means "was this person hidden from this group at 3pm last Tuesday" has
 | FT-2 | Auth — email/password sign up/sign in, `AuthProvider`, `profiles` table + signup trigger, session persistence | FT-1 | ✅ Done |
 | FT-3 | Foreground location permission flow (request, granted, denied + Settings deep link, ask-again) | FT-1 | ✅ Done |
 | FT-4 | Map screen showing your own location (local only, no backend write yet) | FT-3 | ✅ Done |
-| FT-5 | Write own location to `location_history` (append-only, includes `speed_mps`/`heading_deg` from day one — this is the schema decision v5/v6 depend on later) | FT-4, FT-2 | ⬜ Not started |
+| FT-5 | Write own location to `location_history` (append-only, includes `speed_mps`/`heading_deg` from day one — this is the schema decision v5/v6 depend on later) | FT-4, FT-2 | ✅ Done |
 | FT-6 | Realtime — show the other user's location, updates live via Supabase realtime | FT-5 | ⬜ Not started |
 
 **v1 is done once FT-6 ships** — that's the actual "we see each other" milestone.
@@ -132,6 +132,7 @@ Building against **Option A (GPS-derived, no new native dependency)** — do not
 
 ## Other flags worth remembering later
 - `location_history` has no retention/pruning policy — revisit before v5 ships at scale.
+- `location_history` can receive two rows with the identical `recorded_at` timestamp (down to the millisecond) but different `accuracy` from a single `watchPositionAsync` callback — observed on-device during FT-5 QA (2026-08-04), not reproduced as an app bug (the effect fires once per distinct callback invocation as designed). Likely a CoreLocation quirk delivering two fixes in quick succession with the same GPS timestamp. Harmless today; worth a dedupe pass before v5 playback (FT-22/23) if duplicate-instant points ever cause visible jitter.
 - iOS background-location App Store review requires clear in-UX justification (FT-18).
 - iOS geofence region monitoring has a practical accuracy floor (~100–150m) — small zones like "front porch" may be unreliable (FT-14).
 - Android is explicitly out of scope for the entire roadmap; would need separate handling if ever added.

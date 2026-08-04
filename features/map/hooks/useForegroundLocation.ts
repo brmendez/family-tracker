@@ -9,6 +9,10 @@ import {
 
 type UseForegroundLocationResult = {
   coords: Location.LocationObjectCoords | null;
+  // The time the GPS fix itself was taken (location.timestamp, ms since
+  // epoch), not the time it was received/processed. FT-5 needs this to
+  // record recorded_at accurately in location_history.
+  timestamp: number | null;
   errorMessage: string | null;
 };
 
@@ -21,6 +25,7 @@ export function useForegroundLocation(): UseForegroundLocationResult {
   const [coords, setCoords] = useState<Location.LocationObjectCoords | null>(
     null,
   );
+  const [timestamp, setTimestamp] = useState<number | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const subscriptionRef = useRef<Location.LocationSubscription | null>(null);
 
@@ -41,6 +46,7 @@ export function useForegroundLocation(): UseForegroundLocationResult {
             }
 
             setCoords(location.coords);
+            setTimestamp(location.timestamp);
           },
         );
 
@@ -69,5 +75,5 @@ export function useForegroundLocation(): UseForegroundLocationResult {
     };
   }, []);
 
-  return { coords, errorMessage };
+  return { coords, timestamp, errorMessage };
 }

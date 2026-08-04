@@ -5,6 +5,7 @@ import MapView, { Marker, type Region } from 'react-native-maps';
 
 import { MAP_INITIAL_DELTA } from '../../../lib/constants';
 import { useForegroundLocation } from '../hooks/useForegroundLocation';
+import { useLocationHistoryWriter } from '../hooks/useLocationHistoryWriter';
 
 // Renders the map centered on the user's own current position, with a
 // single marker that tracks it. Uses a plain Marker rather than MapView's
@@ -14,12 +15,14 @@ import { useForegroundLocation } from '../hooks/useForegroundLocation';
 // the fixed-appearance blue dot — starting with Marker now means that's an
 // additive upgrade later, not a rework. Assumes foreground location
 // permission has already been granted by the time this mounts (see
-// LocationPermissionGate in app/index.tsx). Writing this location to
-// Supabase (FT-5) and showing other users (FT-6) are both out of scope
-// here.
+// LocationPermissionGate in app/index.tsx). Writes the live stream to
+// location_history in the background via useLocationHistoryWriter (FT-5).
+// Showing other users (FT-6) is still out of scope here.
 export function CurrentLocationMap() {
-  const { coords, errorMessage } = useForegroundLocation();
+  const { coords, timestamp, errorMessage } = useForegroundLocation();
   const [initialRegion, setInitialRegion] = useState<Region | null>(null);
+
+  useLocationHistoryWriter(coords, timestamp);
 
   useEffect(() => {
     if (initialRegion || !coords) {
