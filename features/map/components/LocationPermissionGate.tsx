@@ -31,7 +31,7 @@ export const LocationPermissionGate = ({
   if (status === 'checking') {
     return (
       <View style={styles.container}>
-        <ActivityIndicator size="large" />
+        <ActivityIndicator size="large" accessibilityLabel="Loading" />
       </View>
     );
   }
@@ -48,7 +48,12 @@ export const LocationPermissionGate = ({
           Family Tracker can&apos;t show your location to your family group
           until you turn on location access in Settings.
         </Text>
-        <Pressable style={styles.button} onPress={handleOpenSettings}>
+        <Pressable
+          style={styles.button}
+          onPress={handleOpenSettings}
+          accessibilityRole="button"
+          accessibilityLabel="Open Settings"
+        >
           <Text style={styles.buttonText}>Open Settings</Text>
         </Pressable>
       </View>
@@ -63,7 +68,12 @@ export const LocationPermissionGate = ({
         Family Tracker uses your location to show it to your family group on the
         map.
       </Text>
-      <Pressable style={styles.button} onPress={requestPermission}>
+      <Pressable
+        style={styles.button}
+        onPress={requestPermission}
+        accessibilityRole="button"
+        accessibilityLabel="Allow Location Access"
+      >
         <Text style={styles.buttonText}>Allow Location Access</Text>
       </Pressable>
     </View>
