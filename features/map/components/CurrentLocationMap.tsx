@@ -58,6 +58,7 @@ export const CurrentLocationMap = () => {
       <Marker
         coordinate={{ latitude: coords.latitude, longitude: coords.longitude }}
         title="You"
+        accessibilityLabel="Your location"
       />
     </MapView>
   );
