@@ -5,10 +5,10 @@ import {
   PostgrestError,
   type AuthChangeEvent,
   type AuthSession as Session,
-  type User,
 } from '@supabase/supabase-js';
 
 import { supabase } from '../lib/supabase';
+import { createProfile, createSession, flush } from '../test/utils';
 
 import { AuthProvider, useAuth, type Profile } from './auth.context';
 
@@ -57,29 +57,6 @@ const mockedAuth = supabase.auth as unknown as {
   signOut: jest.Mock;
 };
 const mockedFrom = supabase.from as unknown as jest.Mock;
-
-const createUser = (id: string): User => ({
-  id,
-  app_metadata: {},
-  user_metadata: {},
-  aud: 'authenticated',
-  created_at: '2024-01-01T00:00:00.000Z',
-});
-
-const createSession = (userId: string): Session => ({
-  access_token: `access-${userId}`,
-  refresh_token: `refresh-${userId}`,
-  expires_in: 3600,
-  token_type: 'bearer',
-  user: createUser(userId),
-});
-
-const createProfile = (userId: string, displayName: string): Profile => ({
-  id: userId,
-  display_name: displayName,
-  avatar_color: null,
-  created_at: '2024-01-01T00:00:00.000Z',
-});
 
 // Default: subscribe successfully, never emit any additional events unless
 // the test explicitly fires one. Most tests don't care about the
@@ -142,14 +119,6 @@ const mockProfileQueryDeferred = () => {
   mockedFrom.mockReturnValueOnce({ select });
 
   return { resolve: resolveFn };
-};
-
-// Session restore and the profile-fetch effect both settle over a couple of
-// microtask ticks. Flushing twice keeps assertions stable regardless of
-// which of getSession()/onAuthStateChange's INITIAL_SESSION resolves first.
-const flush = async () => {
-  await act(async () => {});
-  await act(async () => {});
 };
 
 const renderAuth = () => renderHook(() => useAuth(), { wrapper: AuthProvider });
