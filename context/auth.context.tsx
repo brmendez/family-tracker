@@ -43,10 +43,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     let isMounted = true;
 
     const restoreSession = async () => {
-      const { data } = await supabase.auth.getSession();
+      const { data, error } = await supabase.auth.getSession();
 
       if (!isMounted) {
         return;
+      }
+
+      if (error) {
+        console.warn('[auth] failed to restore session:', error.message);
       }
 
       setSession(data.session);
