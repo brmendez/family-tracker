@@ -2,10 +2,12 @@
 import { CurrentLocationMap } from '../features/map/components/CurrentLocationMap';
 import { LocationPermissionGate } from '../features/map/components/LocationPermissionGate';
 
-export default function IndexScreen() {
+const IndexScreen = () => {
   return (
     <LocationPermissionGate>
       <CurrentLocationMap />
     </LocationPermissionGate>
   );
-}
+};
+
+export default IndexScreen;

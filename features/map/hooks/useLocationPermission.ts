@@ -20,7 +20,7 @@ type UseLocationPermissionResult = {
 // resolves immediately with the same denied status instead of re-prompting,
 // so callers must route the user to Settings instead (see
 // LocationPermissionGate).
-export function useLocationPermission(): UseLocationPermissionResult {
+export const useLocationPermission = (): UseLocationPermissionResult => {
   const [status, setStatus] = useState<LocationPermissionState>('checking');
 
   const refreshStatus = useCallback(async () => {
@@ -40,11 +40,11 @@ export function useLocationPermission(): UseLocationPermissionResult {
   }, []);
 
   return { status, requestPermission };
-}
+};
 
-function toPermissionState(
+const toPermissionState = (
   response: Location.LocationPermissionResponse,
-): LocationPermissionState {
+): LocationPermissionState => {
   if (response.status === Location.PermissionStatus.GRANTED) {
     return 'granted';
   }
@@ -54,4 +54,4 @@ function toPermissionState(
   }
 
   return 'undetermined';
-}
+};

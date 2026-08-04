@@ -21,7 +21,7 @@ type UseForegroundLocationResult = {
 // already been granted (see LocationPermissionGate) — this hook does not
 // request permission itself. Background location is explicitly out of
 // scope here; see FT-18.
-export function useForegroundLocation(): UseForegroundLocationResult {
+export const useForegroundLocation = (): UseForegroundLocationResult => {
   const [coords, setCoords] = useState<Location.LocationObjectCoords | null>(
     null,
   );
@@ -32,7 +32,7 @@ export function useForegroundLocation(): UseForegroundLocationResult {
   useEffect(() => {
     let isMounted = true;
 
-    async function startWatching() {
+    const startWatching = async () => {
       try {
         const subscription = await Location.watchPositionAsync(
           {
@@ -64,7 +64,7 @@ export function useForegroundLocation(): UseForegroundLocationResult {
 
         setErrorMessage((error as Error).message);
       }
-    }
+    };
 
     startWatching();
 
@@ -76,4 +76,4 @@ export function useForegroundLocation(): UseForegroundLocationResult {
   }, []);
 
   return { coords, timestamp, errorMessage };
-}
+};

@@ -18,7 +18,7 @@ import { useLocationHistoryWriter } from '../hooks/useLocationHistoryWriter';
 // LocationPermissionGate in app/index.tsx). Writes the live stream to
 // location_history in the background via useLocationHistoryWriter (FT-5).
 // Showing other users (FT-6) is still out of scope here.
-export function CurrentLocationMap() {
+export const CurrentLocationMap = () => {
   const { coords, timestamp, errorMessage } = useForegroundLocation();
   const [initialRegion, setInitialRegion] = useState<Region | null>(null);
 
@@ -61,7 +61,7 @@ export function CurrentLocationMap() {
       />
     </MapView>
   );
-}
+};
 
 const styles = StyleSheet.create({
   map: {

@@ -14,7 +14,7 @@ import {
 
 import { useAuth } from '../../context/auth.context';
 
-export default function SignInScreen() {
+const SignInScreen = () => {
   const { signIn } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -87,7 +87,9 @@ export default function SignInScreen() {
       </View>
     </KeyboardAvoidingView>
   );
-}
+};
+
+export default SignInScreen;
 
 const styles = StyleSheet.create({
   container: {

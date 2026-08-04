@@ -16,7 +16,7 @@ import { useAuth } from '../../context/auth.context';
 
 const MIN_PASSWORD_LENGTH = 6;
 
-export default function SignUpScreen() {
+const SignUpScreen = () => {
   const { signUp } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -93,7 +93,9 @@ export default function SignUpScreen() {
       </View>
     </KeyboardAvoidingView>
   );
-}
+};
+
+export default SignUpScreen;
 
 const styles = StyleSheet.create({
   container: {

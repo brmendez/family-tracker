@@ -19,9 +19,9 @@ type LocationPermissionGateProps = {
 // not-yet-determined (request flow), granted (renders children), or denied
 // (Settings deep link, since iOS won't show a fresh in-app prompt once
 // already denied).
-export function LocationPermissionGate({
+export const LocationPermissionGate = ({
   children,
-}: LocationPermissionGateProps) {
+}: LocationPermissionGateProps) => {
   const { status, requestPermission } = useLocationPermission();
 
   const handleOpenSettings = useCallback(() => {
@@ -68,7 +68,7 @@ export function LocationPermissionGate({
       </Pressable>
     </View>
   );
-}
+};
 
 const styles = StyleSheet.create({
   container: {

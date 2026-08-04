@@ -5,7 +5,7 @@ import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { AuthProvider, useAuth } from '../context/auth.context';
 
-function RootNavigator() {
+const RootNavigator = () => {
   const { session, loading } = useAuth();
 
   // Session is still being restored from AsyncStorage — avoid flashing
@@ -28,16 +28,18 @@ function RootNavigator() {
       </Stack.Protected>
     </Stack>
   );
-}
+};
 
-export default function RootLayout() {
+const RootLayout = () => {
   return (
     <AuthProvider>
       <RootNavigator />
       <StatusBar style="auto" />
     </AuthProvider>
   );
-}
+};
+
+export default RootLayout;
 
 const styles = StyleSheet.create({
   loadingContainer: {
