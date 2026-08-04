@@ -1,6 +1,12 @@
 // context/auth.context.test.tsx
 import { act, renderHook } from '@testing-library/react-native';
-import type { AuthSession as Session, User } from '@supabase/supabase-js';
+import {
+  AuthError,
+  PostgrestError,
+  type AuthChangeEvent,
+  type AuthSession as Session,
+  type User,
+} from '@supabase/supabase-js';
 
 import { supabase } from '../lib/supabase';
 
@@ -24,14 +30,25 @@ jest.mock('../lib/supabase', () => ({
   },
 }));
 
-type GetSessionResult = { data: { session: Session | null }; error: { message: string } | null };
-type ProfileQueryResult = { data: Profile | null; error: { message: string } | null };
-type AuthChangeCallback = (event: string, session: Session | null) => void;
+type GetSessionResult = {
+  data: { session: Session | null };
+  error: AuthError | null;
+};
+type ProfileQueryResult = {
+  data: Profile | null;
+  error: PostgrestError | null;
+};
+type AuthChangeCallback = (
+  event: AuthChangeEvent,
+  session: Session | null,
+) => void;
 
-// The real supabase client types (AuthError, PostgrestQueryBuilder, ...) are
-// awkward to construct in tests and irrelevant here — auth.context.tsx only
-// ever reads `.message` off errors. Casting through `unknown` swaps in a
-// minimal, fully-typed mock shape instead of relying on `any`.
+// supabase.auth's real return type is a discriminated union keyed on
+// error/session presence, which is awkward to express as a mock's static
+// return type. Casting through `unknown` swaps in a simpler shape while
+// still using the real AuthError/PostgrestError/AuthChangeEvent types below,
+// rather than `any` or hand-rolled error shapes that could drift from the
+// library's actual types.
 const mockedAuth = supabase.auth as unknown as {
   getSession: jest.Mock<Promise<GetSessionResult>, []>;
   onAuthStateChange: jest.Mock;
@@ -80,20 +97,24 @@ const mockAuthStateChangeInert = () => {
 // subscribing, racing against the awaited getSession() call in
 // restoreSession. Also exposes fireEvent so a test can push further
 // events (e.g. a user switch) through the same listener.
-const mockAuthStateChangeWithInitialSession = (initialSession: Session | null) => {
+const mockAuthStateChangeWithInitialSession = (
+  initialSession: Session | null,
+) => {
   const unsubscribe = jest.fn();
   let capturedCallback: AuthChangeCallback | null = null;
 
-  mockedAuth.onAuthStateChange.mockImplementation((callback: AuthChangeCallback) => {
-    capturedCallback = callback;
-    Promise.resolve().then(() => callback('INITIAL_SESSION', initialSession));
+  mockedAuth.onAuthStateChange.mockImplementation(
+    (callback: AuthChangeCallback) => {
+      capturedCallback = callback;
+      Promise.resolve().then(() => callback('INITIAL_SESSION', initialSession));
 
-    return { data: { subscription: { unsubscribe } } };
-  });
+      return { data: { subscription: { unsubscribe } } };
+    },
+  );
 
   return {
     unsubscribe,
-    fireEvent: (event: string, session: Session | null) => {
+    fireEvent: (event: AuthChangeEvent, session: Session | null) => {
       capturedCallback?.(event, session);
     },
   };
@@ -133,8 +154,15 @@ const flush = async () => {
 
 const renderAuth = () => renderHook(() => useAuth(), { wrapper: AuthProvider });
 
+let warnSpy: jest.SpiedFunction<typeof console.warn>;
+
 beforeEach(() => {
   jest.clearAllMocks();
+  warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+});
+
+afterEach(() => {
+  warnSpy.mockRestore();
 });
 
 describe('AuthProvider session restore', () => {
@@ -175,11 +203,9 @@ describe('AuthProvider session restore', () => {
   });
 
   it('logs a getSession() error via console.warn but still sets session and loading', async () => {
-    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
-
     mockedAuth.getSession.mockResolvedValue({
       data: { session: null },
-      error: { message: 'network unreachable' },
+      error: new AuthError('network unreachable'),
     });
     mockAuthStateChangeInert();
 
@@ -192,8 +218,6 @@ describe('AuthProvider session restore', () => {
     );
     expect(result.current?.session).toBeNull();
     expect(result.current?.loading).toBe(false);
-
-    warnSpy.mockRestore();
   });
 
   it('does not update state after unmount, and unsubscribes the auth listener on cleanup', async () => {
@@ -215,7 +239,10 @@ describe('AuthProvider session restore', () => {
     // stop the effect from calling setState on an unmounted component).
     await expect(
       act(async () => {
-        resolveGetSession({ data: { session: createSession('late-user') }, error: null });
+        resolveGetSession({
+          data: { session: createSession('late-user') },
+          error: null,
+        });
         await pending;
       }),
     ).resolves.not.toThrow();
@@ -238,7 +265,10 @@ describe('AuthProvider profile fetch', () => {
   });
 
   it('has no profile query in flight and a null profile when signed out', async () => {
-    mockedAuth.getSession.mockResolvedValue({ data: { session: null }, error: null });
+    mockedAuth.getSession.mockResolvedValue({
+      data: { session: null },
+      error: null,
+    });
     mockAuthStateChangeInert();
 
     const { result } = await renderAuth();
@@ -249,20 +279,28 @@ describe('AuthProvider profile fetch', () => {
   });
 
   it('logs a profile-fetch error via console.warn and leaves profile null', async () => {
-    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
     const session = createSession('user-1');
 
     mockedAuth.getSession.mockResolvedValue({ data: { session }, error: null });
     mockAuthStateChangeInert();
-    mockProfileQuery({ data: null, error: { message: 'row not found' } });
+    mockProfileQuery({
+      data: null,
+      error: new PostgrestError({
+        message: 'row not found',
+        details: '',
+        hint: '',
+        code: 'PGRST116',
+      }),
+    });
 
     const { result } = await renderAuth();
     await flush();
 
-    expect(warnSpy).toHaveBeenCalledWith('[auth] failed to load profile:', 'row not found');
+    expect(warnSpy).toHaveBeenCalledWith(
+      '[auth] failed to load profile:',
+      'row not found',
+    );
     expect(result.current?.profile).toBeNull();
-
-    warnSpy.mockRestore();
   });
 
   it('ignores a stale profile response for the previous user after switching users mid-flight', async () => {
@@ -270,7 +308,10 @@ describe('AuthProvider profile fetch', () => {
     const sessionB = createSession('user-b');
     const profileB = createProfile('user-b', 'Bea');
 
-    mockedAuth.getSession.mockResolvedValue({ data: { session: sessionA }, error: null });
+    mockedAuth.getSession.mockResolvedValue({
+      data: { session: sessionA },
+      error: null,
+    });
     const { fireEvent } = mockAuthStateChangeWithInitialSession(sessionA);
 
     const deferredA = mockProfileQueryDeferred();
@@ -306,14 +347,20 @@ describe('AuthProvider profile fetch', () => {
 
 describe('AuthProvider signUp/signIn/signOut', () => {
   it('signUp returns { error: null } on success', async () => {
-    mockedAuth.getSession.mockResolvedValue({ data: { session: null }, error: null });
+    mockedAuth.getSession.mockResolvedValue({
+      data: { session: null },
+      error: null,
+    });
     mockAuthStateChangeInert();
     mockedAuth.signUp.mockResolvedValue({ data: {}, error: null });
 
     const { result } = await renderAuth();
     await flush();
 
-    const response = await result.current!.signUp('new@example.com', 'password123');
+    const response = await result.current!.signUp(
+      'new@example.com',
+      'password123',
+    );
 
     expect(response).toEqual({ error: null });
     expect(mockedAuth.signUp).toHaveBeenCalledWith({
@@ -323,30 +370,42 @@ describe('AuthProvider signUp/signIn/signOut', () => {
   });
 
   it('signUp returns { error: message } on failure', async () => {
-    mockedAuth.getSession.mockResolvedValue({ data: { session: null }, error: null });
+    mockedAuth.getSession.mockResolvedValue({
+      data: { session: null },
+      error: null,
+    });
     mockAuthStateChangeInert();
     mockedAuth.signUp.mockResolvedValue({
       data: {},
-      error: { message: 'email already registered' },
+      error: new AuthError('email already registered'),
     });
 
     const { result } = await renderAuth();
     await flush();
 
-    const response = await result.current!.signUp('taken@example.com', 'password123');
+    const response = await result.current!.signUp(
+      'taken@example.com',
+      'password123',
+    );
 
     expect(response).toEqual({ error: 'email already registered' });
   });
 
   it('signIn returns { error: null } on success', async () => {
-    mockedAuth.getSession.mockResolvedValue({ data: { session: null }, error: null });
+    mockedAuth.getSession.mockResolvedValue({
+      data: { session: null },
+      error: null,
+    });
     mockAuthStateChangeInert();
     mockedAuth.signInWithPassword.mockResolvedValue({ data: {}, error: null });
 
     const { result } = await renderAuth();
     await flush();
 
-    const response = await result.current!.signIn('user@example.com', 'password123');
+    const response = await result.current!.signIn(
+      'user@example.com',
+      'password123',
+    );
 
     expect(response).toEqual({ error: null });
     expect(mockedAuth.signInWithPassword).toHaveBeenCalledWith({
@@ -356,23 +415,32 @@ describe('AuthProvider signUp/signIn/signOut', () => {
   });
 
   it('signIn returns { error: message } on failure', async () => {
-    mockedAuth.getSession.mockResolvedValue({ data: { session: null }, error: null });
+    mockedAuth.getSession.mockResolvedValue({
+      data: { session: null },
+      error: null,
+    });
     mockAuthStateChangeInert();
     mockedAuth.signInWithPassword.mockResolvedValue({
       data: {},
-      error: { message: 'invalid credentials' },
+      error: new AuthError('invalid credentials'),
     });
 
     const { result } = await renderAuth();
     await flush();
 
-    const response = await result.current!.signIn('user@example.com', 'wrong-password');
+    const response = await result.current!.signIn(
+      'user@example.com',
+      'wrong-password',
+    );
 
     expect(response).toEqual({ error: 'invalid credentials' });
   });
 
   it('signOut calls supabase.auth.signOut()', async () => {
-    mockedAuth.getSession.mockResolvedValue({ data: { session: null }, error: null });
+    mockedAuth.getSession.mockResolvedValue({
+      data: { session: null },
+      error: null,
+    });
     mockAuthStateChangeInert();
     mockedAuth.signOut.mockResolvedValue({ error: null });
 
@@ -387,7 +455,10 @@ describe('AuthProvider signUp/signIn/signOut', () => {
 
 describe('AuthProvider context value stability', () => {
   it('keeps the same context value reference across re-renders when session/profile/loading are unchanged', async () => {
-    mockedAuth.getSession.mockResolvedValue({ data: { session: null }, error: null });
+    mockedAuth.getSession.mockResolvedValue({
+      data: { session: null },
+      error: null,
+    });
     mockAuthStateChangeInert();
 
     const { result, rerender } = await renderAuth();
