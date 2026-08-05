@@ -8,13 +8,7 @@ import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { supabase } from '../../../lib/supabase';
 import { useOtherUserLocation } from './useOtherUserLocation';
 
-jest.mock('../../../lib/supabase', () => ({
-  supabase: {
-    from: jest.fn(),
-    channel: jest.fn(),
-    removeChannel: jest.fn(),
-  },
-}));
+jest.mock('../../../lib/supabase');
 
 const mockSupabaseFrom = supabase.from as jest.MockedFunction<typeof supabase.from>;
 const mockSupabaseChannel = supabase.channel as jest.MockedFunction<typeof supabase.channel>;

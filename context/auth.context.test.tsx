@@ -13,22 +13,12 @@ import { createProfile, createSession, flush } from '../test/utils';
 import { AuthProvider, useAuth, type Profile } from './auth.context';
 
 // supabase is imported directly (not injected) by auth.context.tsx, so it's
-// mocked at the module boundary. Each auth/query method is driven
-// independently per test via the typed handles below. jest.mock calls are
-// hoisted above these imports by babel-jest, so the mock is in place before
-// auth.context.tsx (or this file) ever touches the real client.
-jest.mock('../lib/supabase', () => ({
-  supabase: {
-    auth: {
-      getSession: jest.fn(),
-      onAuthStateChange: jest.fn(),
-      signUp: jest.fn(),
-      signInWithPassword: jest.fn(),
-      signOut: jest.fn(),
-    },
-    from: jest.fn(),
-  },
-}));
+// mocked at the module boundary via lib/__mocks__/supabase.ts. Each
+// auth/query method is driven independently per test via the typed handles
+// below. jest.mock calls are hoisted above these imports by babel-jest, so
+// the mock is in place before auth.context.tsx (or this file) ever touches
+// the real client.
+jest.mock('../lib/supabase');
 
 type GetSessionResult = {
   data: { session: Session | null };

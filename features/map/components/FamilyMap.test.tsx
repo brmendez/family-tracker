@@ -1,11 +1,6 @@
 // features/map/components/FamilyMap.test.tsx
 // jest.mock() calls must come BEFORE any other imports
-jest.mock('../../../lib/supabase', () => ({
-  supabase: {
-    from: jest.fn(),
-  },
-}));
-
+jest.mock('../../../lib/supabase');
 jest.mock('../../../context/auth.context');
 
 jest.mock('../hooks/useForegroundLocation');

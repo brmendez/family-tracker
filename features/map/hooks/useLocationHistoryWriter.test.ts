@@ -7,11 +7,7 @@ import { supabase } from '../../../lib/supabase';
 import { useLocationHistoryWriter } from './useLocationHistoryWriter';
 
 jest.mock('../../../context/auth.context');
-jest.mock('../../../lib/supabase', () => ({
-  supabase: {
-    from: jest.fn(),
-  },
-}));
+jest.mock('../../../lib/supabase');
 
 const mockUseAuth = useAuth as jest.MockedFunction<typeof useAuth>;
 const mockSupabaseFrom = supabase.from as jest.MockedFunction<typeof supabase.from>;
