@@ -1,11 +1,11 @@
 // app/index.tsx
-import { CurrentLocationMap } from '../features/map/components/CurrentLocationMap';
+import { FamilyMap } from '../features/map/components/FamilyMap';
 import { LocationPermissionGate } from '../features/map/components/LocationPermissionGate';
 
 const IndexScreen = () => {
   return (
     <LocationPermissionGate>
-      <CurrentLocationMap />
+      <FamilyMap />
     </LocationPermissionGate>
   );
 };

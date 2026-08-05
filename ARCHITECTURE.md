@@ -62,7 +62,7 @@ Answer #7 means "was this person hidden from this group at 3pm last Tuesday" has
 | FT-3 | Foreground location permission flow (request, granted, denied + Settings deep link, ask-again) | FT-1 | ✅ Done |
 | FT-4 | Map screen showing your own location (local only, no backend write yet) | FT-3 | ✅ Done |
 | FT-5 | Write own location to `location_history` (append-only, includes `speed_mps`/`heading_deg` from day one — this is the schema decision v5/v6 depend on later) | FT-4, FT-2 | ✅ Done |
-| FT-6 | Realtime — show the other user's location, updates live via Supabase realtime | FT-5 | ⬜ Not started |
+| FT-6 | Realtime — show the other user's location, updates live via Supabase realtime | FT-5 | ✅ Done |
 
 **v1 is done once FT-6 ships** — that's the actual "we see each other" milestone.
 
