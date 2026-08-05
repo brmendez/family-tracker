@@ -72,7 +72,7 @@ Answer #7 means "was this person hidden from this group at 3pm last Tuesday" has
 
 | Ticket | Description | Depends on | Status |
 |---|---|---|---|
-| FT-7 | Schema: `groups` + `group_members` (generic, no "family" type — just a suggested default name). Role enforcement per #1. Auto-delete-on-last-leave trigger per #2. | v1 | ⬜ |
+| FT-7 | Schema: `groups` + `group_members` (generic, no "family" type — just a suggested default name). Role enforcement per #1. Auto-delete-on-last-leave trigger per #2. | v1 | ✅ Done |
 | FT-8 | Create a group, name it (default suggestion "Family") | FT-7 | ⬜ |
 | FT-9 | Invite to group — mechanism per #3, final call still pending | FT-7, FT-8 | ⬜ |
 | FT-10 | Accept/decline invite | FT-9 | ⬜ |
