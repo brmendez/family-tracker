@@ -9,18 +9,22 @@ import {
 
 type UseForegroundLocationResult = {
   coords: Location.LocationObjectCoords | null;
-  // The time the GPS fix itself was taken (location.timestamp, ms since
-  // epoch), not the time it was received/processed. FT-5 needs this to
-  // record recorded_at accurately in location_history.
+  /**
+   * The time the GPS fix itself was taken (location.timestamp, ms since
+   * epoch), not the time it was received/processed. FT-5 needs this to
+   * record recorded_at accurately in location_history.
+   */
   timestamp: number | null;
   errorMessage: string | null;
 };
 
-// Wraps expo-location's watchPositionAsync for foreground-only tracking.
-// Callers are expected to only render this once foreground permission has
-// already been granted (see LocationPermissionGate) — this hook does not
-// request permission itself. Background location is explicitly out of
-// scope here; see FT-18.
+/**
+ * Wraps expo-location's watchPositionAsync for foreground-only tracking.
+ * Callers are expected to only render this once foreground permission has
+ * already been granted (see LocationPermissionGate) — this hook does not
+ * request permission itself. Background location is explicitly out of
+ * scope here; see FT-18.
+ */
 export const useForegroundLocation = (): UseForegroundLocationResult => {
   const [coords, setCoords] = useState<Location.LocationObjectCoords | null>(
     null,

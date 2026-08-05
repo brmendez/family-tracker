@@ -7,15 +7,6 @@ import { useEffect, useState } from 'react';
 
 import { supabase } from '../../../lib/supabase';
 
-// Given a user_id, fetches their most recent location_history row, then
-// subscribes to postgres_changes INSERT events on location_history
-// filtered to that user_id, updating state on every new fix. Re-runs the
-// initial fetch every time the channel (re)enters the SUBSCRIBED state —
-// not just on first mount — so a dropped/restored connection re-syncs to
-// the true latest fix (postgres_changes does not backfill missed events
-// on reconnect). No-ops while otherUserId is null. Removes the channel on
-// unmount or when otherUserId changes, mirroring
-// useForegroundLocation's cleanup pattern.
 export type OtherUserLocation = {
   latitude: number;
   longitude: number;
@@ -46,6 +37,17 @@ const toOtherUserLocation = (row: LocationHistoryRow): OtherUserLocation => ({
   headingDeg: row.heading_deg,
 });
 
+/**
+ * Given a user_id, fetches their most recent location_history row, then
+ * subscribes to postgres_changes INSERT events on location_history
+ * filtered to that user_id, updating state on every new fix. Re-runs the
+ * initial fetch every time the channel (re)enters the SUBSCRIBED state —
+ * not just on first mount — so a dropped/restored connection re-syncs to
+ * the true latest fix (postgres_changes does not backfill missed events
+ * on reconnect). No-ops while otherUserId is null. Removes the channel on
+ * unmount or when otherUserId changes, mirroring
+ * useForegroundLocation's cleanup pattern.
+ */
 export const useOtherUserLocation = (
   otherUserId: string | null,
 ): UseOtherUserLocationResult => {

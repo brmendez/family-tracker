@@ -4,11 +4,6 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '../../../context/auth.context';
 import { supabase } from '../../../lib/supabase';
 
-// v1-only: with exactly two hardcoded users, "the other profile" is simply
-// "the profiles row that isn't mine." Queries profiles where id != own
-// userId. Zero rows is a valid state (not an error) — the other person
-// hasn't signed up yet. If a third profile exists before FT-12, which one
-// comes back is undefined — accepted v1 limitation.
 export type OtherProfile = {
   id: string;
   displayName: string;
@@ -21,6 +16,13 @@ type UseOtherProfileResult = {
   errorMessage: string | null;
 };
 
+/**
+ * v1-only: with exactly two hardcoded users, "the other profile" is simply
+ * "the profiles row that isn't mine." Queries profiles where id != own
+ * userId. Zero rows is a valid state (not an error) — the other person
+ * hasn't signed up yet. If a third profile exists before FT-12, which one
+ * comes back is undefined — accepted v1 limitation.
+ */
 export const useOtherProfile = (): UseOtherProfileResult => {
   const { userId } = useAuth();
   const [otherProfile, setOtherProfile] = useState<OtherProfile | null>(null);

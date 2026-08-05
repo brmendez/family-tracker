@@ -13,13 +13,15 @@ type UseLocationPermissionResult = {
   requestPermission: () => Promise<void>;
 };
 
-// Wraps expo-location's foreground permission APIs and exposes a single
-// status enum that distinguishes "not yet asked" from "explicitly denied" —
-// on iOS, requestForegroundPermissionsAsync() will only ever show the system
-// prompt once. After a denial, canAskAgain flips to false and the call
-// resolves immediately with the same denied status instead of re-prompting,
-// so callers must route the user to Settings instead (see
-// LocationPermissionGate).
+/**
+ * Wraps expo-location's foreground permission APIs and exposes a single
+ * status enum that distinguishes "not yet asked" from "explicitly denied" —
+ * on iOS, requestForegroundPermissionsAsync() will only ever show the system
+ * prompt once. After a denial, canAskAgain flips to false and the call
+ * resolves immediately with the same denied status instead of re-prompting,
+ * so callers must route the user to Settings instead (see
+ * LocationPermissionGate).
+ */
 export const useLocationPermission = (): UseLocationPermissionResult => {
   const [status, setStatus] = useState<LocationPermissionState>('checking');
 

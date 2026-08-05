@@ -5,16 +5,18 @@ import { useEffect } from 'react';
 import { useAuth } from '../../../context/auth.context';
 import { supabase } from '../../../lib/supabase';
 
-// Writes each foreground GPS fix to location_history (append-only, per
-// ARCHITECTURE.md — v5/v6 depend on a full history, not a "latest
-// location" row). Does not watch GPS itself: takes the coords/timestamp
-// already produced by useForegroundLocation so there is only ever one
-// watchPositionAsync subscription for the map screen.
-//
-// Insert failures are logged and swallowed rather than surfaced or
-// retried — the map must keep working even if a write occasionally
-// fails (e.g. a network hiccup). Retry/offline-queue handling is
-// explicitly out of scope for FT-5.
+/**
+ * Writes each foreground GPS fix to location_history (append-only, per
+ * ARCHITECTURE.md — v5/v6 depend on a full history, not a "latest
+ * location" row). Does not watch GPS itself: takes the coords/timestamp
+ * already produced by useForegroundLocation so there is only ever one
+ * watchPositionAsync subscription for the map screen.
+ *
+ * Insert failures are logged and swallowed rather than surfaced or
+ * retried — the map must keep working even if a write occasionally
+ * fails (e.g. a network hiccup). Retry/offline-queue handling is
+ * explicitly out of scope for FT-5.
+ */
 export const useLocationHistoryWriter = (
   coords: Location.LocationObjectCoords | null,
   timestamp: number | null,
