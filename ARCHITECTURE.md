@@ -63,8 +63,80 @@ Answer #7 means "was this person hidden from this group at 3pm last Tuesday" has
 | FT-4 | Map screen showing your own location (local only, no backend write yet) | FT-3 | ✅ Done |
 | FT-5 | Write own location to `location_history` (append-only, includes `speed_mps`/`heading_deg` from day one — this is the schema decision v5/v6 depend on later) | FT-4, FT-2 | ✅ Done |
 | FT-6 | Realtime — show the other user's location, updates live via Supabase realtime | FT-5 | ✅ Done |
+| FT-28 | Staleness display for the other user's marker — "last seen X ago" label + visual staleness styling once a fix crosses a stale threshold. Correctness/trust fix for FT-6 (see detail below). | FT-6 | ⬜ |
 
 **v1 is done once FT-6 ships** — that's the actual "we see each other" milestone.
+
+### FT-28 detail — Staleness display for the other user's marker
+
+**Type:** Enhancement (trust/correctness fix — the underlying fetch/subscribe
+logic from FT-6 is correct; the problem is that a location from a year ago
+and a location from ten seconds ago render identically on the map, with no
+signal to the viewer that they might be looking at stale data).
+
+**Why:** `useOtherUserLocation` fetches the single most recent
+`location_history` row with no time bound. Because v1 has no background
+location writer (background tracking doesn't exist until FT-18, and even
+then it's scoped to geofencing, not general position broadcast), the other
+user's marker only updates while *they* have the app foregrounded. A closed
+app is the normal case, not an edge case — so an unflagged stale marker is a
+routine, not rare, trust problem.
+
+**Scope:**
+- New constant `LOCATION_STALE_THRESHOLD_MS` in `lib/constants.ts` (recommend
+  15 minutes — see rationale below), documented alongside the existing watch
+  thresholds, tunable without touching component/hook code.
+- New hook in `features/map/hooks/` (e.g. `useLocationStaleness`) that takes
+  a `recordedAt` ISO string and derives `{ label: string; isStale: boolean }`.
+  Purely derived from the timestamp already returned by `useOtherUserLocation`
+  — no new Supabase reads, no changes to the FT-6 fetch/subscribe logic.
+  Re-renders on an interval (not a refetch) so the label's relative-time text
+  advances even when no new location event arrives.
+- `FamilyMap.tsx` (or a small extracted marker subcomponent, if the JSX
+  starts crowding) renders the "last seen X ago" label near/on the other
+  user's marker, and applies an alternate visual style once `isStale` is
+  true.
+- Applies only to the other user's marker. The current user's own marker
+  never shows a staleness state.
+
+**Out of scope:**
+- Any change to `useOtherUserLocation`'s query or realtime subscription
+  logic — the data fetch itself is correct and unchanged; this ticket is
+  display-only.
+- Any schema or RLS change to `location_history`.
+- A multi-tier severity system (e.g. "recent" vs "very stale") — a single
+  threshold + an always-accurate relative-time label, per the PO's original
+  two-part ask.
+- Push/local notification when the other user's location goes stale.
+- Distinguishing "stationary with app open" from "app closed" — both look
+  identical via `recorded_at` alone, since there's no periodic heartbeat
+  write while stationary (see `LOCATION_WATCH_DISTANCE_INTERVAL_M`). A
+  motionless-but-open session may false-flag as stale; solving that would
+  require a heartbeat write regardless of movement, an FT-5-level
+  battery/data tradeoff, not part of this ticket.
+- Any staleness/gap indicator in v5 playback (FT-22/FT-23) — historical
+  route rendering is a separate, not-yet-scoped concern.
+- Any change to background tracking cadence or introduction of background
+  location writes — that's an FT-18-adjacent, dev-build-line decision.
+
+**On-device verification:** With both accounts signed in, let the other
+user's device post at least one live fix, then background/quit the app on
+that device. Confirm: (a) the label on their marker shows increasing
+relative time ("just now" → "2 minutes ago" → ...) without requiring a new
+fix to arrive; (b) once past 15 minutes, the marker visibly changes
+appearance (e.g. dims / changes color / gains a border); (c) reopening the
+other device's app and letting it post a new fix immediately flips the
+marker back to its fresh appearance and resets the label.
+
+**Threshold rationale:** 15 minutes, not the PO's floated >1 hour. Given
+`LOCATION_WATCH_TIME_INTERVAL_MS`/`LOCATION_WATCH_DISTANCE_INTERVAL_M`
+(5s/10m, foreground-only), the realistic cause of staleness in this app is
+"the app isn't open," not GPS lag — >1h would leave a closed-app marker
+looking live for up to an hour, close to today's actual bug. Too short a
+threshold (e.g. 2 min) would instead false-flag someone standing still with
+the app genuinely open, since no new row is written until they move 10m. 15
+minutes is generous enough to avoid that false positive in ordinary indoor
+movement, while catching a closed app meaningfully faster than an hour.
 
 ---
 
@@ -137,3 +209,4 @@ Building against **Option A (GPS-derived, no new native dependency)** — do not
 - iOS geofence region monitoring has a practical accuracy floor (~100–150m) — small zones like "front porch" may be unreliable (FT-14).
 - Android is explicitly out of scope for the entire roadmap; would need separate handling if ever added.
 - **Future: avatar markers.** Eventual direction (not yet scoped to a ticket) is for both yourself and other group members to be represented on the map by profile picture, not a generic pin or the native blue dot — closer to a "chat bubble"/Life360-style avatar marker. This affects FT-4/FT-6 implementation choices now: use a plain `Marker` (customizable) for yourself rather than `MapView`'s `showsUserLocation` blue dot, even though the blue dot is simpler today, so the later upgrade to an avatar image is additive rather than a rework. `profiles.avatar_color` already exists as a placeholder for visual identity (FT-2) — a future `avatar_url` column is the natural next step whenever this gets scoped for real.
+- **FT-28's 15-minute staleness threshold is tuned for the current foreground-only reality** (no background location writer exists until FT-18, which is scoped to geofencing only, not general broadcast). If background location tracking is ever broadened beyond FT-18's narrow use case, this threshold should be revisited — a background-tracked app would make "stale" a much rarer, more meaningful signal than it is today.
