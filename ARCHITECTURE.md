@@ -145,7 +145,7 @@ movement, while catching a closed app meaningfully faster than an hour.
 | Ticket | Description | Depends on | Status |
 |---|---|---|---|
 | FT-7 | Schema: `groups` + `group_members` (generic, no "family" type — just a suggested default name). Role enforcement per #1. Auto-delete-on-last-leave trigger per #2. | v1 | ✅ Done |
-| FT-8 | Create a group, name it (default suggestion "Family") | FT-7 | ⬜ |
+| FT-8 | Create a group, name it (default suggestion "Family") | FT-7 | ✅ Done |
 | FT-9 | Invite to group — mechanism per #3, final call still pending | FT-7, FT-8 | ⬜ |
 | FT-10 | Accept/decline invite | FT-9 | ⬜ |
 | FT-11 | Leave group (auto-delete on last member per #2) | FT-7 | ⬜ |
@@ -201,6 +201,7 @@ Building against **Option A (GPS-derived, no new native dependency)** — do not
 ## Still open
 - **#3**: final call on invite mechanism (email-match-at-signup vs. link with third-party deep-link service) — needed before FT-9, not before.
 - **#9**: speed/duration thresholds for the dangerous-activity flag — needed before FT-27, not before.
+- **#10**: should a group owner be able to explicitly delete a group (vs. the existing auto-delete-on-last-member-leaves behavior from FT-7 being the only way a group goes away)? RLS already permits it (`groups_delete_owner` policy) but no ticket/UI exposes it yet. Not needed before any currently-scoped ticket — flagged during FT-8, not blocking it.
 
 ## Other flags worth remembering later
 - `location_history` has no retention/pruning policy — revisit before v5 ships at scale.
