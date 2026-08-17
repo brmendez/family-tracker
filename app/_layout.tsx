@@ -21,7 +21,7 @@ const RootNavigator = () => {
   return (
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Protected guard={session !== null}>
-        <Stack.Screen name="index" />
+        <Stack.Screen name="(app)" />
       </Stack.Protected>
       <Stack.Protected guard={session === null}>
         <Stack.Screen name="(auth)" />

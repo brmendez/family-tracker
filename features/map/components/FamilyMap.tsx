@@ -20,7 +20,7 @@ import { useOtherUserLocation } from '../hooks/useOtherUserLocation';
  * the fixed-appearance blue dot — starting with Marker now means that's an
  * additive upgrade later, not a rework. Assumes foreground location
  * permission has already been granted by the time this mounts (see
- * LocationPermissionGate in app/index.tsx). Writes the live stream to
+ * LocationPermissionGate in app/(app)/index.tsx). Writes the live stream to
  * location_history in the background via useLocationHistoryWriter (FT-5).
  * Initial region continues to center on own location only — no fit/zoom
  * logic to contain both markers (out of scope for FT-6).
