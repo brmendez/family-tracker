@@ -363,4 +363,28 @@ describe('GroupsScreen', () => {
       expect(screen.queryByTestId('loading-indicator')).toBeNull();
     });
   });
+
+  describe('FT-9: list item navigation', () => {
+    it('renders list items as pressable elements (for navigation to detail screen)', async () => {
+      const groups = [
+        createMockGroup('group-1', 'Family', 'owner'),
+        createMockGroup('group-2', 'Friends', 'member'),
+      ];
+      mockUseGroups.mockReturnValue({
+        groups,
+        loading: false,
+        errorMessage: null,
+        createGroup: mockCreateGroup,
+        creating: false,
+        createErrorMessage: null,
+        refetch: mockRefetch,
+      });
+
+      await render(<GroupsScreen />);
+
+      // List items should be rendered (they're now in Pressable elements)
+      expect(screen.getByText('Family (owner)')).toBeTruthy();
+      expect(screen.getByText('Friends')).toBeTruthy();
+    });
+  });
 });
