@@ -7,6 +7,7 @@ jest.mock('../hooks/useForegroundLocation');
 jest.mock('../hooks/useLocationHistoryWriter');
 jest.mock('../hooks/useOtherProfile');
 jest.mock('../hooks/useOtherUserLocation');
+jest.mock('./OtherUserMarker');
 jest.mock('react-native-maps', () => {
   const React = require('react');
   return {
@@ -24,6 +25,7 @@ import { useForegroundLocation } from '../hooks/useForegroundLocation';
 import { useLocationHistoryWriter } from '../hooks/useLocationHistoryWriter';
 import { useOtherProfile } from '../hooks/useOtherProfile';
 import { useOtherUserLocation } from '../hooks/useOtherUserLocation';
+import { OtherUserMarker } from './OtherUserMarker';
 import { FamilyMap } from './FamilyMap';
 
 const mockUseForegroundLocation =
@@ -34,6 +36,8 @@ const mockUseOtherProfile =
   useOtherProfile as jest.MockedFunction<typeof useOtherProfile>;
 const mockUseOtherUserLocation =
   useOtherUserLocation as jest.MockedFunction<typeof useOtherUserLocation>;
+const mockOtherUserMarker =
+  OtherUserMarker as jest.MockedFunction<typeof OtherUserMarker>;
 
 // FamilyMap wraps MapView in a container View (to allow a sibling "waiting
 // for other user" text node), so the map is the container's first child
@@ -61,6 +65,19 @@ const createMockCoords = (
 describe('FamilyMap', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+
+    // Mock OtherUserMarker to render a testable element
+    mockOtherUserMarker.mockImplementation(({ displayName, location }) => {
+      const React = require('react');
+      return React.createElement('OtherUserMarker', {
+        testID: 'other-user-marker',
+        'data-display-name': displayName,
+        'data-recorded-at': location?.recordedAt,
+        'data-accessibility-label': `${displayName}'s location`,
+        accessible: true,
+        accessibilityLabel: `${displayName}'s location`,
+      });
+    });
 
     // Default: no other profile yet, so FT-6 additions are inert unless a
     // test opts in explicitly.
@@ -683,5 +700,118 @@ describe('FamilyMap', () => {
     await render(<FamilyMap />);
 
     expect(mockUseOtherUserLocation).toHaveBeenCalledWith(null);
+  });
+
+  // FT-28: Tests for staleness display on other user's marker
+  describe('FT-28: staleness display for other user marker', () => {
+    it('renders OtherUserMarker when other user location is available', async () => {
+      const coords = createMockCoords();
+      const timestamp = Date.now();
+
+      mockUseForegroundLocation.mockReturnValue({
+        coords,
+        timestamp,
+        errorMessage: null,
+      });
+
+      mockUseOtherProfile.mockReturnValue({
+        otherProfile: {
+          id: 'other-user-id',
+          displayName: 'Alice',
+          avatarColor: '#FF5733',
+        },
+        loading: false,
+        errorMessage: null,
+      });
+
+      mockUseOtherUserLocation.mockReturnValue({
+        location: {
+          latitude: 40.7128,
+          longitude: -74.006,
+          recordedAt: '2024-06-15T14:30:00.000Z',
+          speedMps: 2.0,
+          headingDeg: 180,
+        },
+        loading: false,
+        errorMessage: null,
+      });
+
+      await render(<FamilyMap />);
+
+      // OtherUserMarker should be called when location is available
+      expect(mockOtherUserMarker).toHaveBeenCalled();
+    });
+
+    it('does not render OtherUserMarker when other user location is null', async () => {
+      const coords = createMockCoords();
+      const timestamp = Date.now();
+
+      mockUseForegroundLocation.mockReturnValue({
+        coords,
+        timestamp,
+        errorMessage: null,
+      });
+
+      mockUseOtherProfile.mockReturnValue({
+        otherProfile: {
+          id: 'other-user-id',
+          displayName: 'Bob',
+          avatarColor: null,
+        },
+        loading: false,
+        errorMessage: null,
+      });
+
+      mockUseOtherUserLocation.mockReturnValue({
+        location: null,
+        loading: false,
+        errorMessage: null,
+      });
+
+      await render(<FamilyMap />);
+
+      // OtherUserMarker should NOT be called when location is null
+      expect(mockOtherUserMarker).not.toHaveBeenCalled();
+    });
+
+    it('renders own marker without stale styling (pinColor undefined)', async () => {
+      const coords = createMockCoords();
+      const timestamp = Date.now();
+
+      mockUseForegroundLocation.mockReturnValue({
+        coords,
+        timestamp,
+        errorMessage: null,
+      });
+
+      mockUseOtherProfile.mockReturnValue({
+        otherProfile: {
+          id: 'other-user-id',
+          displayName: 'Charlie',
+          avatarColor: null,
+        },
+        loading: false,
+        errorMessage: null,
+      });
+
+      mockUseOtherUserLocation.mockReturnValue({
+        location: {
+          latitude: 40.7128,
+          longitude: -74.006,
+          recordedAt: '2024-01-01T00:00:00.000Z',
+          speedMps: 1.0,
+          headingDeg: 45,
+        },
+        loading: false,
+        errorMessage: null,
+      });
+
+      await render(<FamilyMap />);
+
+      // Own marker should exist and should NOT be stale-styled
+      expect(screen.getByLabelText('Your location')).toBeTruthy();
+      // OtherUserMarker should also be rendered for the other user
+      expect(screen.getByLabelText("Charlie's location")).toBeTruthy();
+    });
   });
 });
