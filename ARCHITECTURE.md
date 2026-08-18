@@ -152,6 +152,153 @@ movement, while catching a closed app meaningfully faster than an hour.
 | FT-12 | Group-scoped location visibility — rewrites `location_history` RLS to require shared group membership; map uses per-group switcher per #4 | FT-6, FT-7 | ⬜ |
 | FT-New | Password reset flow (in scope starting here per #8) | FT-2 | ⬜ |
 
+### FT-9 detail — Invite to group (email-match-at-signup)
+
+**Type:** Feature
+
+**Why:** Groups (FT-7) and group creation (FT-8) exist, but there is no way
+to get anyone else into a group. Per locked decision #3, invites work by
+email match at signup for now: any group member sends an invite by email
+while inside a group they belong to; if that email signs up fresh, they're
+auto-added as a member. A true tap-to-join deferred deep link is deferred
+until App Store distribution, but the `invites` table and membership-grant
+logic must be shaped so that path is additive later, not a rework.
+
+**Scope boundary vs. FT-10 (resolved below):** Decision #3 says the app
+"auto-matches them to the group(s) they were invited to and adds them as a
+member," which only mechanically makes sense for **brand-new signups** — the
+DB trigger that would do the matching only fires on profile creation. There
+is no equivalent event to hook for an **email that already has an account**.
+So the boundary is:
+- **New signup matching a pending invite:** membership is granted
+  immediately, in the same transaction as profile creation. No confirmation
+  step — this is what "adds them as a member" means mechanically. FT-9 owns
+  this end-to-end.
+- **Existing account matching a pending invite:** no signup event fires, so
+  nothing happens automatically. The invite just sits as `status =
+  'pending'`. Surfacing that to the already-existing user and letting them
+  accept/decline it is entirely **FT-10's job** — FT-9 only has to make sure
+  the schema doesn't block it (zero client grants on `invites`, everything
+  RPC-mediated, so FT-10 adds its own RPCs without touching FT-9's).
+
+This means the "invited email already has an account vs. doesn't yet"
+question doesn't change how `send_invite` behaves at write time (same row
+either way) — it only changes which mechanism later resolves the row.
+
+**Schema — `invites` table:**
+- `id uuid primary key default gen_random_uuid()`
+- `group_id uuid not null references public.groups(id) on delete cascade` —
+  cascade is load-bearing, see edge case #3 below.
+- `invited_email text not null` — normalized (trim + lowercase) in
+  `send_invite` before insert; check constraint is a backstop.
+- `invited_by uuid references public.profiles(id) on delete set null` —
+  provenance only, not a permission source (any member can invite per #1).
+- `token text null` — reserved, unused this ticket. `text`, not `uuid`: a
+  future deferred-deep-link provider's token format isn't known yet.
+- `status text not null default 'pending' check (status in ('pending',
+  'accepted', 'declined'))` — `'declined'` included now even though FT-9
+  never sets it, since FT-10 will need it.
+- `responded_at timestamptz null` — set when status leaves `'pending'`.
+- `created_at timestamptz not null default now()`
+
+Indexes: partial unique `(group_id, invited_email) where status = 'pending'`
+(backstop for duplicate-invite edge case; old accepted/declined rows for the
+same pair don't block a fresh invite); partial unique `(token) where token
+is not null` (free today, avoids a later migration); index supporting the
+signup-time lookup on `invited_email`.
+
+RLS / grants: RLS enabled, but **no grants to `authenticated`** — no SELECT/
+INSERT/UPDATE/DELETE. All interaction goes through SECURITY DEFINER
+functions, same rationale as `groups` having no client INSERT grant. No
+policies written now — add them when FT-10 adds the grant they'd gate.
+
+**Server-side logic:**
+- `send_invite(p_group_id uuid, p_email text)` RPC, SECURITY DEFINER: checks
+  `is_group_member` for the caller, normalizes the email, looks up
+  `auth.users` (errors if already a member), treats an existing pending
+  invite for the same pair as idempotent rather than erroring, then inserts
+  the row.
+- `grant_group_membership_from_invite(p_invite_id uuid, p_user_id uuid)`,
+  SECURITY DEFINER, internal (no client EXECUTE grant): inserts the
+  `group_members` row (`on conflict do nothing`), marks the invite
+  `'accepted'` + `responded_at`. This is the reusable core decision #3
+  requires — FT-9's signup trigger calls it, and FT-10's future
+  `accept_invite` RPC (and any later token-resolution path) should call it
+  too rather than reimplementing the grant.
+- Auto-match trigger: a new AFTER INSERT trigger **on `public.profiles`**
+  (not on `auth.users`, and not folded into FT-2's `handle_new_user()`)
+  calling `match_pending_invites_for_new_profile()`, SECURITY DEFINER. Looks
+  up the new profile's email via `auth.users`, normalizes it, finds all
+  pending invites for that email, calls
+  `grant_group_membership_from_invite` for each. Triggering on `profiles`
+  rather than `auth.users` avoids both touching FT-2's tested trigger and
+  any same-table multi-trigger firing-order fragility — by the time this
+  fires, the `profiles` row (and the FK it needs) is guaranteed to exist.
+- DB trigger, not an Edge Function: this is a same-database operation with
+  no external side effect (no email/SMS/webhook). A trigger keeps membership
+  atomic with signup and versioned in `supabase/migrations/`, same as
+  `handle_new_user()`.
+
+**Client scope** (mirrors FT-8's `features/groups/` conventions):
+- `app/(app)/groups/[id].tsx` — thin route → `GroupDetailScreen`.
+- `features/groups/components/GroupDetailScreen.tsx` — shows the group,
+  renders `InviteForm`. Reuses `useGroups()` unchanged (finds the matching
+  id client-side rather than adding a near-duplicate single-row hook).
+  Handles loading + "group not found" (e.g. auto-deleted mid-navigation).
+- `features/groups/components/InviteForm.tsx` — mirrors `CreateGroupForm`:
+  controlled input, light client-side validation (non-empty +
+  `@`/`.` — real validation is server-side), submit + spinner + inline
+  error, plus a new inline success state ("Invite sent").
+- `features/groups/hooks/useSendInvite.ts` — mirrors `useGroups`'
+  `createGroup` shape: `{ sendInvite(email), sending, sendErrorMessage }`,
+  calls `supabase.rpc('send_invite', ...)`. No new types file.
+- **Touches FT-8's `GroupsScreen.tsx`:** list items become pressable →
+  navigate to the new detail route. Additive only, not a refactor of FT-8's
+  fetch/display logic.
+
+**Edge cases:**
+1. Inviting an email already a member — checked in `send_invite`, friendly
+   error, no row created.
+2. Inviting the same email twice — DB-level partial unique index backstops
+   `send_invite`'s pre-check, which treats it as idempotent.
+3. Invite to a group that auto-deletes before acceptance — handled by
+   `invites.group_id`'s `on delete cascade`; the later signup simply finds
+   no row. Worth an explicit test since it's the interaction of two
+   separate tickets' cascades (FT-7 + FT-9), not obviously verified by
+   either alone.
+4. Case sensitivity — normalized at write time and at signup-match time
+   identically, so any casing of a previously-invited address matches.
+5. Email has no account yet vs. already has one — mechanically identical at
+   write time (same pending row); only the resolution mechanism differs
+   (auto-grant on new signup vs. FT-10's future accept/decline).
+
+**Out of scope:**
+- Any UI for an existing account to see/accept/decline a pending invite —
+  FT-10, entirely. Intentional interim gap: an existing user invited to a
+  group sees nothing in-app until FT-10 ships.
+- Any transactional email/push/in-app notification of the invite — PO
+  communicates out of band for now. Flagged as a real product gap, not
+  assumed away.
+- A "view/manage sent invites" list (pending invites for a group, revoke) —
+  only the one-shot send + inline confirmation ships here.
+- Any token/deep-link resolution logic — column is reserved only, per #3.
+- Any change to the owner/member role model — invited users always join as
+  `'member'`.
+- Bulk invite (multiple emails per submission).
+- Any change to `useGroups.ts` or `CreateGroupForm.tsx`'s internal logic.
+
+**On-device verification:** From Account A's Groups list, tap into a group,
+send an invite to a not-yet-registered email; confirm the inline success
+message. Sign up a **new** account using that exact email with different
+casing than typed (tests normalization); confirm the group appears in that
+account's Groups list immediately after signup, no extra step. Separately,
+invite an email already a member, and invite the same email twice —
+confirm both produce a friendly inline message, not a crash. Finally,
+create a group with a second member, have that member leave (triggering
+FT-7's auto-delete) while an invite to a third, not-yet-signed-up email is
+still pending, then sign that email up — confirm no error and no group
+appears.
+
 ---
 
 ## V3 — Geofencing *(blocked by v2)*
@@ -201,6 +348,8 @@ Building against **Option A (GPS-derived, no new native dependency)** — do not
 ## Still open
 - **#9**: speed/duration thresholds for the dangerous-activity flag — needed before FT-27, not before.
 - **#10**: should a group owner be able to explicitly delete a group (vs. the existing auto-delete-on-last-member-leaves behavior from FT-7 being the only way a group goes away)? RLS already permits it (`groups_delete_owner` policy) but no ticket/UI exposes it yet. Not needed before any currently-scoped ticket — flagged during FT-8, not blocking it.
+- **Rename a group**: same shape as #10 — FT-7 already granted the owner `update (name)` permission and an owner-only RLS policy (`groups_update_owner`), but no ticket/UI exposes it. Flagged during FT-9 design, not blocking it.
+- **Rename yourself (display name)**: `profiles.display_name` is a real, user-editable column (RLS already allows a user to update their own row) — it's not derived from email, that's only the signup fallback when no name is provided. No ticket/UI lets a user change it after joining. Flagged during FT-9 design, not blocking it.
 
 ## Other flags worth remembering later
 - `location_history` has no retention/pruning policy — revisit before v5 ships at scale.
