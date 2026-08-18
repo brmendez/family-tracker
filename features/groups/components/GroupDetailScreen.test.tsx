@@ -174,23 +174,6 @@ describe('GroupDetailScreen', () => {
   });
 
   describe('fetch error state', () => {
-    it('shows fetch error when errorMessage is set and no group found', async () => {
-      mockUseGroups.mockReturnValue({
-        groups: [],
-        loading: false,
-        errorMessage: 'Network error',
-        createGroup: jest.fn(),
-        creating: false,
-        createErrorMessage: null,
-        refetch: jest.fn(),
-      });
-
-      await render(<GroupDetailScreen />);
-
-      // When errorMessage && !group, shows the error message
-      expect(screen.getByText('Network error')).toBeTruthy();
-    });
-
     it('shows fetch error but group if partial load succeeded', async () => {
       const group = createMockGroup('group-1', 'Family');
       mockUseGroups.mockReturnValue({

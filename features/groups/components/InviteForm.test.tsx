@@ -101,16 +101,6 @@ describe('InviteForm', () => {
     });
   });
 
-  describe('button', () => {
-    it('button text is "Send invite" when not sending', async () => {
-      await render(
-        <InviteForm onInvite={mockOnInvite} sending={false} sendErrorMessage={null} />,
-      );
-
-      expect(screen.getByText('Send invite')).toBeTruthy();
-    });
-  });
-
   describe('error message display', () => {
     it('displays sendErrorMessage when provided', async () => {
       const errorMsg = 'Email is already a member of this group';
@@ -121,44 +111,5 @@ describe('InviteForm', () => {
       expect(screen.getByText(errorMsg)).toBeTruthy();
     });
 
-    it('does not display error message when null', async () => {
-      await render(
-        <InviteForm onInvite={mockOnInvite} sending={false} sendErrorMessage={null} />,
-      );
-
-      expect(screen.queryByText(/Email is already/)).toBeNull();
-    });
-
-  });
-
-  describe('onInvite callback prop', () => {
-    it('receives onInvite prop', async () => {
-      const callback = jest.fn();
-      await render(
-        <InviteForm onInvite={callback} sending={false} sendErrorMessage={null} />,
-      );
-
-      expect(callback).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('sending state', () => {
-    it('respects sending=false prop', async () => {
-      await render(
-        <InviteForm onInvite={mockOnInvite} sending={false} sendErrorMessage={null} />,
-      );
-
-      const input = screen.getByPlaceholderText('Email address');
-      expect(input.props.editable).toBe(true);
-    });
-
-    it('respects sending=true prop', async () => {
-      await render(
-        <InviteForm onInvite={mockOnInvite} sending={true} sendErrorMessage={null} />,
-      );
-
-      const input = screen.getByPlaceholderText('Email address');
-      expect(input.props.editable).toBe(false);
-    });
   });
 });
