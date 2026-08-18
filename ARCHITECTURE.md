@@ -39,7 +39,7 @@ lib/
 |---|---|---|
 | 1 | Group permissions | Any member can invite. Owner can remove members. Only owner can rename/delete the group. |
 | 2 | Last member leaves a group | Auto-delete the group (cascades geofences, invites, visibility overrides for that group). |
-| 3 | Invite mechanism | PO wants "anyone can be invited, signs up via a link." **Implementation still pending final confirmation**: a true tap-to-join link needs a deferred-deep-link service (e.g. Branch.io) to survive an App Store install round-trip — extra dependency, not needed while the app isn't published. Simpler alternative proposed: invite by email, no token, app auto-matches pending invites to the signed-up email at signup — same end-user feel, no new dependency. **Not blocking v1 — only needed starting v2.** |
+| 3 | Invite mechanism | **Locked (2026-08-18):** email-match-at-signup for now — invite by email, no token; app auto-matches pending invites to the signed-up email at signup. A true tap-to-join link (deferred deep link via e.g. Branch.io) is the ideal long-term UX but only pays for itself once the app is actually distributed via the App Store (deferred deep links exist to survive the install round-trip, which is moot pre-publish). To keep that path additive rather than a rework later, FT-9's `invites` row should include a nullable `token` column now, even though only the email-match path is implemented — the membership-grant logic should be reusable by either "email matched at signup" or "token resolved from a link" trigger, not hardcoded to email lookup only. Estimated LOE to add the link path later: low-to-moderate, mostly native/config work (deep-link SDK, associated domains entitlement, hosted `apple-app-site-association`) — the membership logic itself is reused as-is. Both mechanisms may coexist long-term (different sharing flows, not redundant), but only email-match is being built now. |
 | 4 | Multi-group map view | Per-group filter/switcher, not a combined view. `GroupsProvider` holds `activeGroupId`. |
 | 5 | "All day" invisibility duration | Until local midnight (device timezone, computed server-side via RPC to avoid clock skew). |
 | 6 | Global invisibility toggle | Single global flag, checked **before** any per-group logic — not a convenience action that writes to every group. |
@@ -146,7 +146,7 @@ movement, while catching a closed app meaningfully faster than an hour.
 |---|---|---|---|
 | FT-7 | Schema: `groups` + `group_members` (generic, no "family" type — just a suggested default name). Role enforcement per #1. Auto-delete-on-last-leave trigger per #2. | v1 | ✅ Done |
 | FT-8 | Create a group, name it (default suggestion "Family") | FT-7 | ✅ Done |
-| FT-9 | Invite to group — mechanism per #3, final call still pending | FT-7, FT-8 | ⬜ |
+| FT-9 | Invite to group — email-match-at-signup per #3 (reserve nullable `token` column for future deep-link path) | FT-7, FT-8 | ⬜ |
 | FT-10 | Accept/decline invite | FT-9 | ⬜ |
 | FT-11 | Leave group (auto-delete on last member per #2) | FT-7 | ⬜ |
 | FT-12 | Group-scoped location visibility — rewrites `location_history` RLS to require shared group membership; map uses per-group switcher per #4 | FT-6, FT-7 | ⬜ |
@@ -199,7 +199,6 @@ Building against **Option A (GPS-derived, no new native dependency)** — do not
 ---
 
 ## Still open
-- **#3**: final call on invite mechanism (email-match-at-signup vs. link with third-party deep-link service) — needed before FT-9, not before.
 - **#9**: speed/duration thresholds for the dangerous-activity flag — needed before FT-27, not before.
 - **#10**: should a group owner be able to explicitly delete a group (vs. the existing auto-delete-on-last-member-leaves behavior from FT-7 being the only way a group goes away)? RLS already permits it (`groups_delete_owner` policy) but no ticket/UI exposes it yet. Not needed before any currently-scoped ticket — flagged during FT-8, not blocking it.
 
