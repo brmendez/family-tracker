@@ -63,7 +63,7 @@ Answer #7 means "was this person hidden from this group at 3pm last Tuesday" has
 | FT-4 | Map screen showing your own location (local only, no backend write yet) | FT-3 | ✅ Done |
 | FT-5 | Write own location to `location_history` (append-only, includes `speed_mps`/`heading_deg` from day one — this is the schema decision v5/v6 depend on later) | FT-4, FT-2 | ✅ Done |
 | FT-6 | Realtime — show the other user's location, updates live via Supabase realtime | FT-5 | ✅ Done |
-| FT-28 | Staleness display for the other user's marker — "last seen X ago" label + visual staleness styling once a fix crosses a stale threshold. Correctness/trust fix for FT-6 (see detail below). | FT-6 | ⬜ |
+| FT-28 | Staleness display for the other user's marker — "last seen X ago" label + visual staleness styling once a fix crosses a stale threshold. Correctness/trust fix for FT-6 (see detail below). | FT-6 | ✅ Done |
 
 **v1 is done once FT-6 ships** — that's the actual "we see each other" milestone.
 
