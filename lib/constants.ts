@@ -18,3 +18,6 @@ export const LOCATION_WATCH_DISTANCE_INTERVAL_M = 10;
  * zoomed/panned by the user — roughly a several-block neighborhood view.
  */
 export const MAP_INITIAL_DELTA = 0.01;
+
+// 15min stale threshold for open-but-stationary apps.
+export const LOCATION_STALE_THRESHOLD_MS = 15 * 60 * 1000;
