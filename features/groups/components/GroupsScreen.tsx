@@ -1,4 +1,5 @@
 // features/groups/components/GroupsScreen.tsx
+import { useRouter } from 'expo-router';
 import { useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -46,6 +47,7 @@ export const GroupsScreen = () => {
     refetch,
   } = useGroups();
 
+  const router = useRouter();
   const rootRef = useRef<View>(null);
   const [keyboardOffset, setKeyboardOffset] = useState(0);
 
@@ -87,12 +89,16 @@ export const GroupsScreen = () => {
             ) : (
               <View style={styles.list}>
                 {groups.map((group) => (
-                  <View key={group.id} style={styles.listItem}>
+                  <Pressable
+                    key={group.id}
+                    style={styles.listItem}
+                    onPress={() => router.push(`/groups/${group.id}`)}
+                  >
                     <Text style={styles.listItemText}>
                       {group.name}
                       {group.role === 'owner' ? ' (owner)' : ''}
                     </Text>
-                  </View>
+                  </Pressable>
                 ))}
               </View>
             )}

@@ -4,10 +4,11 @@ import { Pressable, StyleSheet, Text } from 'react-native';
 
 /**
  * FT-8: route group for the signed-in app, mirroring (auth)'s layout
- * shape. headerShown: false is the default (same as (auth)), with two
- * explicit per-screen overrides: the map (index) screen gets a header
- * with a "Groups" button, and the groups screen gets a header with a
- * title, relying on the Stack's default back button to return to map.
+ * shape. headerShown: false is the default (same as (auth)); the map
+ * (index) screen overrides it for a header with a "Groups" button. The
+ * groups screen is its own nested Stack as of FT-9 (see
+ * groups/_layout.tsx) since it now has list + detail screens, so it's
+ * left at the default here and owns its own headers.
  */
 const AppLayout = () => {
   const router = useRouter();
@@ -27,13 +28,7 @@ const AppLayout = () => {
           headerRight: renderGroupsButton,
         }}
       />
-      <Stack.Screen
-        name="groups"
-        options={{
-          headerShown: true,
-          title: 'Groups',
-        }}
-      />
+      <Stack.Screen name="groups" />
     </Stack>
   );
 };
