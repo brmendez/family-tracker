@@ -147,7 +147,7 @@ movement, while catching a closed app meaningfully faster than an hour.
 | FT-7 | Schema: `groups` + `group_members` (generic, no "family" type — just a suggested default name). Role enforcement per #1. Auto-delete-on-last-leave trigger per #2. | v1 | ✅ Done |
 | FT-8 | Create a group, name it (default suggestion "Family") | FT-7 | ✅ Done |
 | FT-9 | Invite to group — email-match-at-signup per #3 (reserve nullable `token` column for future deep-link path) | FT-7, FT-8 | ✅ Done |
-| FT-10 | Accept/decline invite | FT-9 | ⬜ |
+| FT-10 | Accept/decline invite | FT-9 | ✅ Done |
 | FT-11 | Leave group (auto-delete on last member per #2) | FT-7 | ⬜ |
 | FT-12 | Group-scoped location visibility — rewrites `location_history` RLS to require shared group membership; map uses per-group switcher per #4 | FT-6, FT-7 | ⬜ |
 | FT-New | Password reset flow (in scope starting here per #8) | FT-2 | ⬜ |
