@@ -3,14 +3,18 @@
 jest.mock('../../../lib/supabase');
 jest.mock('../../../context/auth.context');
 jest.mock('../hooks/useGroups');
+jest.mock('../hooks/usePendingInvites');
 
-import { render, screen } from '@testing-library/react-native';
+import { act, fireEvent, render, screen } from '@testing-library/react-native';
 
 import { useGroups } from '../hooks/useGroups';
+import { usePendingInvites } from '../hooks/usePendingInvites';
 import { GroupsScreen } from './GroupsScreen';
 import type { Group } from '../hooks/useGroups';
+import type { PendingInvite } from '../hooks/usePendingInvites';
 
 const mockUseGroups = useGroups as jest.MockedFunction<typeof useGroups>;
+const mockUsePendingInvites = usePendingInvites as jest.MockedFunction<typeof usePendingInvites>;
 
 const createMockGroup = (
   id: string = 'group-1',
@@ -24,9 +28,23 @@ const createMockGroup = (
   joinedAt,
 });
 
+const createMockInvite = (
+  id: string = 'invite-1',
+  groupId: string = 'group-1',
+  groupName: string = 'Family',
+  createdAt: string = '2024-01-01T00:00:00.000Z',
+): PendingInvite => ({
+  id,
+  groupId,
+  groupName,
+  createdAt,
+});
+
 describe('GroupsScreen', () => {
   const mockRefetch = jest.fn();
   const mockCreateGroup = jest.fn();
+  const mockRespond = jest.fn();
+  const mockPendingRefetch = jest.fn();
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -34,8 +52,24 @@ describe('GroupsScreen', () => {
     mockUseGroups.mockClear();
     mockRefetch.mockReset();
     mockCreateGroup.mockReset();
+    mockRespond.mockReset();
+    mockPendingRefetch.mockReset();
     mockRefetch.mockResolvedValue(undefined);
     mockCreateGroup.mockResolvedValue({ error: null });
+    mockRespond.mockResolvedValue({ error: null });
+    mockPendingRefetch.mockResolvedValue(undefined);
+
+    // Default usePendingInvites mock: no pending invites
+    mockUsePendingInvites.mockReturnValue({
+      invites: [],
+      loading: false,
+      errorMessage: null,
+      refetch: mockPendingRefetch,
+      respond: mockRespond,
+      respondingId: null,
+      respondErrorMessage: null,
+      respondErrorInviteId: null,
+    });
   });
 
   afterEach(() => {
@@ -385,6 +419,134 @@ describe('GroupsScreen', () => {
       // List items should be rendered (they're now in Pressable elements)
       expect(screen.getByText('Family (owner)')).toBeTruthy();
       expect(screen.getByText('Friends')).toBeTruthy();
+    });
+  });
+
+  describe('FT-10: PendingInvitesSection integration', () => {
+    it('renders PendingInvitesSection with pending invites', async () => {
+      const invites = [createMockInvite('invite-1', 'group-1', 'Family')];
+      mockUsePendingInvites.mockReturnValue({
+        invites,
+        loading: false,
+        errorMessage: null,
+        refetch: mockPendingRefetch,
+        respond: mockRespond,
+        respondingId: null,
+        respondErrorMessage: null,
+        respondErrorInviteId: null,
+      });
+
+      mockUseGroups.mockReturnValue({
+        groups: [],
+        loading: false,
+        errorMessage: null,
+        createGroup: mockCreateGroup,
+        creating: false,
+        createErrorMessage: null,
+        refetch: mockRefetch,
+      });
+
+      await render(<GroupsScreen />);
+
+      expect(screen.getByText('Pending invites')).toBeTruthy();
+      expect(screen.getByText('Family')).toBeTruthy();
+    });
+
+    it('does not render PendingInvitesSection when no pending invites', async () => {
+      mockUsePendingInvites.mockReturnValue({
+        invites: [],
+        loading: false,
+        errorMessage: null,
+        refetch: mockPendingRefetch,
+        respond: mockRespond,
+        respondingId: null,
+        respondErrorMessage: null,
+        respondErrorInviteId: null,
+      });
+
+      mockUseGroups.mockReturnValue({
+        groups: [],
+        loading: false,
+        errorMessage: null,
+        createGroup: mockCreateGroup,
+        creating: false,
+        createErrorMessage: null,
+        refetch: mockRefetch,
+      });
+
+      await render(<GroupsScreen />);
+
+      expect(screen.queryByText('Pending invites')).toBeNull();
+    });
+
+    it('successful accept triggers useGroups refetch', async () => {
+      const invites = [createMockInvite('invite-1', 'group-1', 'Family')];
+      mockUsePendingInvites.mockReturnValue({
+        invites,
+        loading: false,
+        errorMessage: null,
+        refetch: mockPendingRefetch,
+        respond: mockRespond,
+        respondingId: null,
+        respondErrorMessage: null,
+        respondErrorInviteId: null,
+      });
+
+      mockUseGroups.mockReturnValue({
+        groups: [],
+        loading: false,
+        errorMessage: null,
+        createGroup: mockCreateGroup,
+        creating: false,
+        createErrorMessage: null,
+        refetch: mockRefetch,
+      });
+
+      mockRespond.mockResolvedValue({ error: null });
+
+      await render(<GroupsScreen />);
+
+      await act(async () => {
+        fireEvent.press(screen.getByText('Accept'));
+      });
+
+      expect(mockRespond).toHaveBeenCalledWith('invite-1', 'accept');
+      expect(mockRefetch).toHaveBeenCalled();
+    });
+
+    it('successful decline does not trigger useGroups refetch', async () => {
+      const invites = [createMockInvite('invite-1', 'group-1', 'Family')];
+      mockUsePendingInvites.mockReturnValue({
+        invites,
+        loading: false,
+        errorMessage: null,
+        refetch: mockPendingRefetch,
+        respond: mockRespond,
+        respondingId: null,
+        respondErrorMessage: null,
+        respondErrorInviteId: null,
+      });
+
+      mockUseGroups.mockReturnValue({
+        groups: [],
+        loading: false,
+        errorMessage: null,
+        createGroup: mockCreateGroup,
+        creating: false,
+        createErrorMessage: null,
+        refetch: mockRefetch,
+      });
+
+      mockRespond.mockResolvedValue({ error: null });
+
+      await render(<GroupsScreen />);
+
+      await act(async () => {
+        fireEvent.press(screen.getByText('Decline'));
+      });
+
+      expect(mockRespond).toHaveBeenCalledWith('invite-1', 'decline');
+      expect(mockRefetch).not.toHaveBeenCalled();
     });
   });
 });
