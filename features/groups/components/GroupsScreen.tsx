@@ -1,6 +1,6 @@
 // features/groups/components/GroupsScreen.tsx
-import { useRouter } from 'expo-router';
-import { useRef, useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
+import { useCallback, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -44,6 +44,10 @@ import { PendingInvitesSection } from './PendingInvitesSection';
  * in useGroups' already-fetched list on its own — this is the one piece
  * of cross-hook coordination FT-10 adds, handled here since this is the
  * only place both hooks are in scope.
+ *
+ * FT-11: refetches on focus (not just mount) — GroupDetailScreen's Leave
+ * flow navigates back here from a separate useGroups() instance, so this
+ * screen's own list wouldn't otherwise learn about the departure.
  */
 export const GroupsScreen = () => {
   const {
@@ -69,6 +73,12 @@ export const GroupsScreen = () => {
   const [keyboardOffset, setKeyboardOffset] = useState(0);
 
   const showInitialSpinner = loading && groups.length === 0 && !errorMessage;
+
+  useFocusEffect(
+    useCallback(() => {
+      refetch();
+    }, [refetch]),
+  );
 
   const handleRootLayout = () => {
     rootRef.current?.measureInWindow((_x, y) => {
