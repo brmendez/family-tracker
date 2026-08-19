@@ -12,7 +12,9 @@ import {
 } from 'react-native';
 
 import { useGroups } from '../hooks/useGroups';
+import { usePendingInvites } from '../hooks/usePendingInvites';
 import { CreateGroupForm } from './CreateGroupForm';
+import { PendingInvitesSection } from './PendingInvitesSection';
 
 /**
  * FT-8: the first v2 screen — lets the signed-in user see the groups
@@ -35,6 +37,13 @@ import { CreateGroupForm } from './CreateGroupForm';
  * would depend on expo-router's internals rather than a public API.
  * Measuring the root view's on-screen position via `measureInWindow`
  * gives the same value (the header height) without that dependency.
+ *
+ * FT-10: also calls usePendingInvites() and renders PendingInvitesSection
+ * above the groups list. usePendingInvites and useGroups are independent
+ * hook instances, so a successful accept won't make the new group appear
+ * in useGroups' already-fetched list on its own — this is the one piece
+ * of cross-hook coordination FT-10 adds, handled here since this is the
+ * only place both hooks are in scope.
  */
 export const GroupsScreen = () => {
   const {
@@ -46,6 +55,14 @@ export const GroupsScreen = () => {
     createErrorMessage,
     refetch,
   } = useGroups();
+
+  const {
+    invites,
+    respond,
+    respondingId,
+    respondErrorMessage,
+    respondErrorInviteId,
+  } = usePendingInvites();
 
   const router = useRouter();
   const rootRef = useRef<View>(null);
@@ -59,6 +76,16 @@ export const GroupsScreen = () => {
     });
   };
 
+  const handleRespond = async (inviteId: string, decision: 'accept' | 'decline') => {
+    const { error } = await respond(inviteId, decision);
+
+    if (!error && decision === 'accept') {
+      await refetch();
+    }
+
+    return { error };
+  };
+
   return (
     <View ref={rootRef} style={styles.root} onLayout={handleRootLayout}>
       <KeyboardAvoidingView
@@ -70,6 +97,14 @@ export const GroupsScreen = () => {
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
         >
+          <PendingInvitesSection
+            invites={invites}
+            respond={handleRespond}
+            respondingId={respondingId}
+            respondErrorMessage={respondErrorMessage}
+            respondErrorInviteId={respondErrorInviteId}
+          />
+
           <View style={styles.listSection}>
             {showInitialSpinner ? (
               <View style={styles.center}>
