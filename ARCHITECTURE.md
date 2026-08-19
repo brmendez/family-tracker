@@ -305,209 +305,81 @@ appears.
 
 **Type:** Feature
 
-**Why:** FT-9 shipped the case where a *brand-new* signup matches a pending
-invite (auto-granted in the signup trigger's transaction, no confirmation
-step). It explicitly left the other case unhandled: an **existing** account
-has one or more `invites` rows sitting at `status = 'pending'` and nothing
-in the app surfaces them — there's no signup event to hook for an email
-that already has an account. FT-10 closes that gap: let a signed-in user
-see their own pending invites and accept or decline each one. Accept must
-reuse FT-9's `grant_group_membership_from_invite` rather than
-reimplementing the membership-grant logic; decline is new (FT-9 never sets
-`status = 'declined'`, only reserves it).
+**Why:** FT-9 only auto-grants membership on a *brand-new* signup matching
+a pending invite. An **existing** account with a pending invite has no way
+to see or act on it. FT-10 adds that: list a signed-in user's own pending
+invites, accept or decline each. Accept reuses FT-9's
+`grant_group_membership_from_invite` rather than reimplementing the grant;
+decline is new (`status = 'declined'` + `responded_at`, both reserved by
+FT-9's schema but unused until now).
 
-**Schema:** No new tables or columns. `invites.status`'s check constraint
-already includes `'declined'`, and `responded_at` is already present and
-unused by anything but FT-9's accept path — both were reserved for exactly
-this ticket. No new index needed either: the existing `invites_invited_email_idx`
-(plain index on `invited_email`) is sufficient for the per-user lookup below
-at this app's scale (a handful of rows per email, not a hot path).
+**Schema:** No new tables/columns/indexes — `invites.status`'s
+`'declined'` value and `responded_at` were reserved for this ticket.
 
-**RLS / grants — RPC-mediated reads too, not a raw SELECT grant:**
-FT-9's schema note flagged that FT-10 would likely add a grant + RLS
-policy on `invites` (e.g. `SELECT ... USING (invited_email = own email AND
-status = 'pending')`) so an invitee could query their own rows directly,
-the same way `useGroups` queries `group_members`/`groups` directly. This
-design deliberately doesn't do that. The list needs to show *which group*
-each invite is for, which means joining to `groups.name` — but
-`groups_select_member` (FT-7) only allows a client to read a group's row
-if `is_group_member(id)` is true, which is false by definition for someone
-who hasn't accepted yet. A client-side embed
-(`invites.select('..., groups(name)')`) would silently return
-`groups: null` for every row, breaking the one piece of context the user
-needs to make a decision. Fixing that the "grant" way would mean also
-extending FT-7's `groups_select_member` policy — a second migration, a
-second table touched, for a read a single SECURITY DEFINER function does
-in one hop. So: **no new grant or policy on `invites` or `groups` at all.**
-All three operations below (list, accept, decline) go through RPCs, same
-posture FT-9 already stated for this table ("no grants to `authenticated`
-... all interaction goes through SECURITY DEFINER functions") — FT-10
-keeps that invariant fully intact rather than partially breaking it.
+**RLS / grants:** No new grant or policy on `invites` or `groups`. Listing
+invites needs each invite's group name, but `groups_select_member` (FT-7)
+only lets members read a group row — an invitee isn't one yet, so a raw
+client `SELECT` + embed would silently return `groups: null`. Rather than
+also widening FT-7's policy, everything stays RPC-mediated (list, accept,
+decline), preserving the "no client grants on `invites`" posture FT-9
+already established.
 
-**Server-side logic** (new migration, `supabase/migrations/0006_invite_responses.sql`,
-does not edit `0004_groups.sql` or `0005_invites.sql`):
-- `list_my_pending_invites()` RPC, SECURITY DEFINER, `stable`, no
-  arguments: resolves the caller's own normalized email via `auth.users`
-  by `auth.uid()` — the same lookup pattern
-  `match_pending_invites_for_new_profile` already uses, not
-  `auth.jwt() ->> 'email'`, for consistency and because it's already
-  proven correct there. Returns one row per pending invite for that email:
-  `invite_id`, `group_id`, `group_name` (read live off `groups` at call
-  time, bypassing RLS as definer — so a rename between invite and response
-  is reflected automatically, no extra work), `created_at`. Deliberately
-  **omits** the inviter's display name — `invited_by` can be null (FK is
-  `on delete set null`), it's not required by this ticket's scope, and
-  every extra field is an extra join and an extra null-handling case for
-  no behavioral requirement. Flagged as an easy, additive follow-up if the
-  PO wants "so-and-so invited you" copy later.
-- `accept_invite(p_invite_id uuid)` RPC, SECURITY DEFINER: looks up the
-  invite row itself first (not just delegating straight to FT-9's
-  function) — this is the one place FT-10 must not just trust the ID it's
-  handed. Raises a friendly error if the row doesn't exist (already
-  cascaded away — see edge case 3), if `status != 'pending'` (see edge
-  case 2), or if `invited_email` doesn't match the caller's own resolved
-  email (defense in depth against an invite ID from someone else's inbox,
-  even though `list_my_pending_invites` would never have handed it out).
-  Only after all three checks pass does it call
-  `grant_group_membership_from_invite(p_invite_id, auth.uid())` —
-  FT-9's existing function, unchanged, untouched.
-- `decline_invite(p_invite_id uuid)` RPC, SECURITY DEFINER: same three
-  checks as `accept_invite` (exists / pending / owned by caller), then
-  sets `status = 'declined'`, `responded_at = now()`. **This has to be an
-  RPC, not a raw UPDATE grant** — a client-writable `status` column
-  guarded only by "you own this row" would let a client set
-  `status = 'accepted'` directly, skipping `grant_group_membership_from_invite`
-  entirely and leaving `status = 'accepted'` with no matching
-  `group_members` row, a real invariant violation. The RPC is what makes
-  the accepted/member-row pairing unbreakable from the client.
-- All three get the default `PUBLIC` execute grant (no explicit `grant`
-  statement needed), same as `send_invite`/`create_group` — this is the
-  opposite of `grant_group_membership_from_invite`, which FT-9 explicitly
-  revoked client execute on.
+**Server-side logic** (new migration `0006_invite_responses.sql`, doesn't
+touch `0004_groups.sql`/`0005_invites.sql`):
+- `list_my_pending_invites()` — SECURITY DEFINER, resolves caller's email
+  via `auth.users`/`auth.uid()` (same pattern as
+  `match_pending_invites_for_new_profile`), returns pending invites joined
+  live to `group_name`. Omits inviter name (out of scope).
+- `accept_invite(p_invite_id)` / `decline_invite(p_invite_id)` — both
+  SECURITY DEFINER, both re-check the invite exists, is still `'pending'`,
+  and belongs to the caller's email before acting (defense in depth +
+  handles the double-response/cascaded-group races in Edge cases below).
+  Accept then calls FT-9's `grant_group_membership_from_invite` unchanged.
+  Decline must be an RPC, not a raw `UPDATE` grant — otherwise a client
+  could set `status = 'accepted'` directly without ever granting
+  membership, breaking that invariant.
+- All three use the default `PUBLIC` execute grant, like `send_invite`.
 
-**Client scope** (mirrors FT-8/FT-9's `features/groups/` conventions —
-one new hook, one new small component, one additive touch to an existing
-screen, no new route):
-- `features/groups/hooks/usePendingInvites.ts` — new hook, shape mirrors
-  `useGroups`: fetches via `list_my_pending_invites` on mount and when
-  `userId` changes, exposes `{ invites, loading, errorMessage, refetch,
-  respond, respondingId, respondErrorMessage }`. `respond(inviteId,
-  decision: 'accept' | 'decline')` calls `accept_invite` or
-  `decline_invite`, tracks `respondingId` (single in-flight id, not a
-  boolean map — a user can only reasonably tap one invite's button at a
-  time) so each row can show its own spinner without disabling the whole
-  list, and on success calls `refetch()` so the responded-to row drops out
-  (its `status` is no longer `'pending'`, which `list_my_pending_invites`
-  already filters on — no client-side filtering needed). New type
-  `PendingInvite = { id: string; groupId: string; groupName: string;
-  createdAt: string }` colocated in the hook file, no new types file (same
-  precedent as `useSendInvite`).
-- `features/groups/components/PendingInvitesSection.tsx` — new,
-  controlled-props component (mirrors `InviteForm`'s pattern): takes
-  `invites`, `respond`, `respondingId`, `respondErrorMessage` as props.
-  Renders nothing at all when `invites.length === 0` and not loading — no
-  "You have no pending invites" empty state, unlike `GroupsScreen`'s own
-  empty state for the groups list itself. That empty state earns its
-  screen space because groups *are* the screen's primary content; pending
-  invites are an incidental, usually-empty section that shouldn't add
-  permanent visual clutter to the common case. Each row: group name,
-  Accept/Decline buttons, per-row spinner while `respondingId` matches
-  that row's id, inline error text scoped to that row on failure.
-- **Touches `GroupsScreen.tsx`, additive only** (same shape as FT-9's
-  touch to it): calls `usePendingInvites()` alongside the existing
-  `useGroups()` call, renders `<PendingInvitesSection ... />` above the
-  existing groups-list section. One extra wiring step beyond what
-  `usePendingInvites` gives you for free: on a **successful accept**
-  (not decline), `GroupsScreen` must also call `useGroups()`'s own
-  `refetch()` — `usePendingInvites` and `useGroups` are two independent
-  hook instances, so accepting an invite doesn't automatically make the
-  new group appear in the other hook's already-fetched list. This is the
-  one piece of cross-hook coordination this ticket adds; it belongs in
-  `GroupsScreen` (the only place both hooks are in scope), not inside
-  either hook. No change to `useGroups`' or `CreateGroupForm`'s internal
-  logic otherwise.
+**Client scope** (mirrors FT-8/FT-9 conventions, no new route):
+- `features/groups/hooks/usePendingInvites.ts` — mirrors `useGroups`'
+  shape: `{ invites, loading, errorMessage, refetch, respond, respondingId,
+  respondErrorMessage }`. `respond(inviteId, decision)` calls
+  `accept_invite`/`decline_invite`, refetches on success so the row just
+  drops out (already filtered server-side).
+- `features/groups/components/PendingInvitesSection.tsx` — controlled
+  props, renders nothing when empty (unlike `GroupsScreen`'s own
+  groups-list empty state — this section is incidental, usually empty).
+  Per-row Accept/Decline, per-row spinner, per-row inline error.
+- **Touches `GroupsScreen.tsx`, additive only**: renders
+  `<PendingInvitesSection />` above the groups list. On a successful
+  *accept* (not decline), also calls `useGroups()`'s `refetch()` — the two
+  hooks are independent, so an accepted invite's new group wouldn't
+  otherwise appear without this one bit of cross-hook coordination.
 
-**Edge cases:**
-1. Invite ID doesn't belong to the caller — both RPCs re-verify
-   `invited_email` against the caller's own resolved email server-side
-   regardless of what the client passes, even though
-   `list_my_pending_invites` would never hand out someone else's invite
-   id in the first place. Defense in depth, not defense against this
-   app's own UI.
-2. Double-response race — same account signed in on two devices (or a
-   fast double-tap), accept/decline fires twice for the same invite. The
-   second call finds `status != 'pending'` and raises a friendly "This
-   invite has already been responded to" error rather than corrupting
-   state or silently double-inserting; the client should treat that error
-   as "refetch, it's already gone," not a hard failure banner.
-3. Invite's group is deleted (FT-7's last-member-leaves auto-delete)
-   between the list rendering and the user tapping a button — `invites.group_id`'s
-   `on delete cascade` (FT-9) means the row is gone entirely by the time
-   the RPC runs, not just missing a group. `accept_invite`/`decline_invite`'s
-   own existence check catches this and raises the same "no longer
-   available" error as edge case 2, rather than `accept_invite` silently
-   calling into `grant_group_membership_from_invite`'s existing
-   no-such-invite no-op and the client believing it succeeded. Worth an
-   explicit test, same reasoning as FT-9's own equivalent cascade edge
-   case: it's the interaction of two tickets' cleanup logic, not obviously
-   verified by testing either ticket alone.
-4. Decline doesn't permanently block being re-invited — `send_invite`'s
-   partial unique index only covers `status = 'pending'` rows (FT-9), so a
-   member can send a fresh invite to a previously-declined email and it
-   creates a new row normally; the declined row just stays as history.
-5. Multiple pending invites across different groups for the same email —
-   `list_my_pending_invites` returns all of them; accepting or declining
-   one must not touch the others (each is an independent row/RPC call).
-6. Accepting an invite to a group the user is somehow already a member of
-   — `grant_group_membership_from_invite`'s `on conflict do nothing`
-   (FT-9) already makes this a harmless no-op on the membership insert; it
-   still flips the invite to `'accepted'`.
-7. User's email changes after an invite was sent — currently unreachable
-   (no email-change UI exists anywhere in this app), so not handled
-   specially; flagged rather than silently ignored, same spirit as the
-   existing "no sign-out UI" flag below.
+**Edge cases:** invite ID not owned by caller (checked server-side
+regardless of what the client passes); double-response race (second call
+finds `status != 'pending'`, friendly error); invite's group deleted
+between list and tap (cascade removes the row, same "no longer available"
+error as above — worth an explicit test since it's FT-7 + FT-9's cleanup
+interacting, not obviously covered by either ticket alone); decline
+doesn't block a future re-invite (pending-only unique index); multiple
+pending invites act independently; accepting into a group already joined
+is a harmless no-op via `on conflict do nothing`.
 
-**Out of scope:**
-- Inviter display name ("Jane invited you...") — `invited_by` is
-  available on the row but not surfaced; see Server-side logic above for
-  why it's deliberately left out of `list_my_pending_invites`' return
-  shape this ticket.
-- Any notification (push/email/in-app badge) when a new invite arrives —
-  same out-of-scope note FT-9 already carries; the user only discovers a
-  pending invite by opening the Groups screen.
-- Any change to `send_invite`, `grant_group_membership_from_invite`, or
-  the `profiles` signup trigger — FT-9's server-side logic is reused
-  as-is, not touched.
-- Any change to `groups_select_member` or any other FT-7 RLS policy — the
-  RPC-only design above specifically avoids needing this.
-- Revoking/canceling a sent invite from the sender's side — that's the
-  "view/manage sent invites" gap FT-9 already flagged as out of scope for
-  itself; still out of scope here, it's the opposite direction.
-- Token/deep-link resolution — still reserved-only, unaffected by this
-  ticket, per locked decision #3.
-- Sign-out UI. Not folded into this ticket — it's a distinct concern
-  (auth chrome, not invite logic) and would pull unrelated files into this
-  ticket's diff. See On-device verification below for how this is tested
-  without it.
+**Out of scope:** inviter display name, any notification on new invite,
+changes to `send_invite`/`grant_group_membership_from_invite`/signup
+trigger, changes to `groups_select_member` or other FT-7 RLS, revoking a
+sent invite, token/deep-link resolution, sign-out UI.
 
-**On-device verification:** Sign in as Account A on one iOS Simulator
-instance and Account B (an **already-registered** account) on a second,
-concurrently running iOS Simulator instance — no physical second device or
-sign-out UI is needed, since two simulators run independently side by
-side. From Account A, invite Account B's email to a group. On Account B's
-simulator, open the Groups screen, confirm the pending invite appears with
-the correct group name and no group-not-found flash. Tap Accept: confirm
-the invite disappears from the pending section and the group appears in
-the groups list immediately, no manual refresh. Repeat with a second
-invite (different group) and tap Decline instead: confirm it disappears
-from the pending section and no new group appears anywhere in Account B's
-groups list. With two invites pending at once, accept one and decline the
-other; confirm each only affects itself. Separately, reproduce edge case 3
-on device: Account A invites a not-yet-a-member Account B, then Account A
-(or another member) triggers the group's auto-delete by leaving as the
-last member before Account B responds; confirm Account B's app shows a
-friendly "no longer available" message rather than a crash or a false
-success when tapping either button.
+**On-device verification:** Run two iOS Simulator instances concurrently
+(no physical second device or sign-out UI needed), Account A signed into
+one and an already-registered Account B into the other. A invites B to a
+group; confirm B sees the invite with correct group name. B accepts:
+invite disappears, group appears in B's list with no manual refresh. A
+second invite, declined: disappears, no group added. Two pending at once,
+respond to each independently. Separately: A invites not-yet-member B,
+then the group auto-deletes (last member leaves) before B responds —
+confirm B gets a friendly "no longer available" message, not a crash.
 
 ---
 
