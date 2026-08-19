@@ -4,12 +4,15 @@ jest.mock('../../../context/auth.context');
 jest.mock('expo-router');
 jest.mock('../hooks/useGroups');
 jest.mock('../hooks/useSendInvite');
+jest.mock('../hooks/useLeaveGroup');
 
-import { render, screen } from '@testing-library/react-native';
-import { useLocalSearchParams } from 'expo-router';
+import { render, screen, fireEvent } from '@testing-library/react-native';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { Alert } from 'react-native';
 
 import { useGroups } from '../hooks/useGroups';
 import { useSendInvite } from '../hooks/useSendInvite';
+import { useLeaveGroup } from '../hooks/useLeaveGroup';
 import { GroupDetailScreen } from './GroupDetailScreen';
 import type { Group } from '../hooks/useGroups';
 
@@ -18,6 +21,8 @@ const mockUseLocalSearchParams = useLocalSearchParams as jest.MockedFunction<
 >;
 const mockUseGroups = useGroups as jest.MockedFunction<typeof useGroups>;
 const mockUseSendInvite = useSendInvite as jest.MockedFunction<typeof useSendInvite>;
+const mockUseLeaveGroup = useLeaveGroup as jest.MockedFunction<typeof useLeaveGroup>;
+const mockUseRouter = useRouter as jest.MockedFunction<typeof useRouter>;
 
 const createMockGroup = (
   id: string = 'group-1',
@@ -34,6 +39,8 @@ const createMockGroup = (
 describe('GroupDetailScreen', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+
     mockUseLocalSearchParams.mockReturnValue({ id: 'group-1' });
     mockUseGroups.mockReturnValue({
       groups: [createMockGroup('group-1', 'Family')],
@@ -49,10 +56,20 @@ describe('GroupDetailScreen', () => {
       sending: false,
       sendErrorMessage: null,
     });
+    mockUseLeaveGroup.mockReturnValue({
+      leaveGroup: jest.fn(),
+      leaving: false,
+      leaveErrorMessage: null,
+    });
+    mockUseRouter.mockReturnValue({
+      back: jest.fn(),
+      canGoBack: jest.fn().mockReturnValue(true),
+    } as any);
   });
 
   afterEach(() => {
     jest.clearAllMocks();
+    jest.restoreAllMocks();
   });
 
   describe('route parameter handling', () => {
@@ -322,7 +339,160 @@ describe('GroupDetailScreen', () => {
       // Should use the first match
       expect(screen.getByText('Family (owner)')).toBeTruthy();
     });
+  });
 
+  describe('Leave group button (FT-11)', () => {
+    it('renders Leave group button', async () => {
+      await render(<GroupDetailScreen />);
 
+      expect(screen.getByText('Leave group')).toBeTruthy();
+    });
+
+    it('shows confirmation alert when Leave button is pressed', async () => {
+      const alertSpy = jest.spyOn(Alert, 'alert');
+      await render(<GroupDetailScreen />);
+
+      const leaveButton = screen.getByText('Leave group');
+      fireEvent.press(leaveButton);
+
+      expect(alertSpy).toHaveBeenCalledWith(
+        'Leave group?',
+        'You will lose access to this group and its members.',
+        expect.any(Array),
+      );
+    });
+
+    it('calls leaveGroup with groupId on confirmation', async () => {
+      const mockLeaveGroup = jest.fn().mockResolvedValue({ error: null });
+      mockUseLeaveGroup.mockReturnValue({
+        leaveGroup: mockLeaveGroup,
+        leaving: false,
+        leaveErrorMessage: null,
+      });
+
+      await render(<GroupDetailScreen />);
+
+      const leaveButton = screen.getByText('Leave group');
+      fireEvent.press(leaveButton);
+
+      // Get the alert buttons and simulate pressing "Leave"
+      const alertCalls = (Alert.alert as jest.Mock).mock.calls;
+      const buttons = alertCalls[alertCalls.length - 1][2];
+      const leaveButtonInAlert = buttons.find(
+        (btn: any) => btn.text === 'Leave' && btn.style === 'destructive',
+      );
+
+      // Call the onPress callback directly
+      await leaveButtonInAlert.onPress();
+
+      expect(mockLeaveGroup).toHaveBeenCalledWith('group-1');
+    });
+
+    it('hides button and shows spinner during leave', async () => {
+      mockUseLeaveGroup.mockReturnValue({
+        leaveGroup: jest.fn(),
+        leaving: true,
+        leaveErrorMessage: null,
+      });
+
+      await render(<GroupDetailScreen />);
+
+      expect(screen.queryByText('Leave group')).toBeNull();
+    });
+
+    it('displays leaveErrorMessage when leave fails', async () => {
+      const errorMsg = 'Could not leave this group. Please try again.';
+      mockUseLeaveGroup.mockReturnValue({
+        leaveGroup: jest.fn(),
+        leaving: false,
+        leaveErrorMessage: errorMsg,
+      });
+
+      await render(<GroupDetailScreen />);
+
+      expect(screen.getByText(errorMsg)).toBeTruthy();
+    });
+
+    it('displays owner-guard friendly message when owner tries to leave with others', async () => {
+      const ownerGuardMsg =
+        "You're the owner — remove the other members first, or wait until you're the only one left, before leaving this group.";
+      mockUseLeaveGroup.mockReturnValue({
+        leaveGroup: jest.fn(),
+        leaving: false,
+        leaveErrorMessage: ownerGuardMsg,
+      });
+
+      await render(<GroupDetailScreen />);
+
+      expect(screen.getByText(ownerGuardMsg)).toBeTruthy();
+    });
+
+    it('navigates back on successful leave', async () => {
+      const mockLeaveGroup = jest.fn().mockResolvedValue({ error: null });
+      const mockBack = jest.fn();
+
+      mockUseLeaveGroup.mockReturnValue({
+        leaveGroup: mockLeaveGroup,
+        leaving: false,
+        leaveErrorMessage: null,
+      });
+
+      mockUseGroups.mockReturnValue({
+        groups: [createMockGroup('group-1', 'Family')],
+        loading: false,
+        errorMessage: null,
+        createGroup: jest.fn(),
+        creating: false,
+        createErrorMessage: null,
+        refetch: jest.fn(),
+      });
+
+      mockUseRouter.mockReturnValue({
+        back: mockBack,
+        canGoBack: jest.fn().mockReturnValue(true),
+      } as any);
+
+      await render(<GroupDetailScreen />);
+
+      const leaveButton = screen.getByText('Leave group');
+      fireEvent.press(leaveButton);
+
+      const alertCalls = (Alert.alert as jest.Mock).mock.calls;
+      const buttons = alertCalls[alertCalls.length - 1][2];
+      const leaveButtonInAlert = buttons.find(
+        (btn: any) => btn.text === 'Leave' && btn.style === 'destructive',
+      );
+
+      // Call the onPress callback directly and await it
+      await leaveButtonInAlert.onPress();
+
+      expect(mockBack).toHaveBeenCalled();
+    });
+
+    it('does not navigate if leave has id undefined', async () => {
+      mockUseLocalSearchParams.mockReturnValue({ id: undefined } as any);
+
+      const mockBack = jest.fn();
+
+      mockUseGroups.mockReturnValue({
+        groups: [],
+        loading: false,
+        errorMessage: null,
+        createGroup: jest.fn(),
+        creating: false,
+        createErrorMessage: null,
+        refetch: jest.fn(),
+      });
+
+      mockUseRouter.mockReturnValue({
+        back: mockBack,
+        canGoBack: jest.fn().mockReturnValue(true),
+      } as any);
+
+      await render(<GroupDetailScreen />);
+
+      // Group not found case, no Leave button should be visible
+      expect(screen.queryByText('Leave group')).toBeNull();
+    });
   });
 });

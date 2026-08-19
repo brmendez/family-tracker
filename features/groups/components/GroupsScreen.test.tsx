@@ -4,6 +4,14 @@ jest.mock('../../../lib/supabase');
 jest.mock('../../../context/auth.context');
 jest.mock('../hooks/useGroups');
 jest.mock('../hooks/usePendingInvites');
+// FT-11: useFocusEffect needs a real NavigationContainer to resolve
+// useNavigation(), which isn't present in these bare component renders.
+// Stub it to just run the effect immediately, like a plain useEffect —
+// real focus/blur timing isn't what these tests are exercising.
+jest.mock('expo-router', () => ({
+  ...jest.requireActual('expo-router'),
+  useFocusEffect: (effect: () => void) => effect(),
+}));
 
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 
@@ -505,6 +513,7 @@ describe('GroupsScreen', () => {
       mockRespond.mockResolvedValue({ error: null });
 
       await render(<GroupsScreen />);
+      mockRefetch.mockClear(); // clear the focus-effect refetch from mount
 
       await act(async () => {
         fireEvent.press(screen.getByText('Accept'));
@@ -540,6 +549,7 @@ describe('GroupsScreen', () => {
       mockRespond.mockResolvedValue({ error: null });
 
       await render(<GroupsScreen />);
+      mockRefetch.mockClear(); // clear the focus-effect refetch from mount
 
       await act(async () => {
         fireEvent.press(screen.getByText('Decline'));
@@ -547,6 +557,24 @@ describe('GroupsScreen', () => {
 
       expect(mockRespond).toHaveBeenCalledWith('invite-1', 'decline');
       expect(mockRefetch).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('FT-11: focus refetch', () => {
+    it('refetches groups on focus, e.g. returning here after leaving a group elsewhere', async () => {
+      mockUseGroups.mockReturnValue({
+        groups: [createMockGroup('group-1', 'Family')],
+        loading: false,
+        errorMessage: null,
+        createGroup: mockCreateGroup,
+        creating: false,
+        createErrorMessage: null,
+        refetch: mockRefetch,
+      });
+
+      await render(<GroupsScreen />);
+
+      expect(mockRefetch).toHaveBeenCalled();
     });
   });
 });
