@@ -383,6 +383,109 @@ confirm B gets a friendly "no longer available" message, not a crash.
 
 ---
 
+### FT-11 detail — Leave group
+
+**Type:** Feature
+
+**Why:** FT-7 already implements the mechanics this ticket exposes:
+`group_members_delete_self_or_owner` (RLS) already lets a member delete
+their own membership row, and `delete_group_if_empty` (trigger) already
+auto-deletes a group once its last member row is gone, cascading
+geofences/invites/visibility overrides via each table's own FK (per
+decision #2). There is no client affordance to trigger any of that — no
+Leave button exists anywhere. FT-11 is therefore mostly a client-facing
+ticket (button, confirmation, error handling), plus one new guard the
+existing schema doesn't yet enforce: nothing today stops the *owner* from
+leaving a group that still has other members, which would leave the group
+ownerless (no one can rename/delete it per decision #1's owner-only
+checks, since `is_group_owner` would then match nobody).
+
+**Owner-leaves-with-members-remaining — resolved for this ticket, flagged
+for the PO:** Decision #1/#2 don't cover this case. Rather than silently
+picking an answer (auto-transfer ownership, or letting the group go
+ownerless), FT-11 **blocks** it: an owner can only leave a group they're
+the sole member of (which then auto-deletes, same as today). If other
+members remain, the owner must first remove them (existing FT-7
+grant/RLS already permits owner-removes-member, though no UI exposes it
+either — separate, unticketed gap) or wait for a future explicit-delete/
+ownership-transfer ticket. This is the smallest change that doesn't leave
+an invariant broken, but it's a real dead end today (an owner with an
+unwanted group and members who won't leave has no way out) — worth
+flagging to the PO as a follow-up decision, not assumed resolved by this
+ticket alone.
+
+**Schema:** No new tables/columns. FT-7's
+`group_members_delete_self_or_owner` RLS policy and
+`delete_group_if_empty` trigger (migration `0004_groups.sql`) are reused
+unchanged.
+
+**Server-side logic** (new migration `0007_leave_group_owner_guard.sql`):
+- New `BEFORE DELETE` trigger on `group_members`,
+  `prevent_ownerless_group_leave()`: if the row being deleted has `role =
+  'owner'` and any *other* `group_members` row still exists for that
+  `group_id`, raises an exception (distinct message the client hook maps
+  to a friendly string) instead of allowing the delete. Otherwise
+  (non-owner, or owner with no other members left) the delete proceeds
+  untouched, and FT-7's existing `AFTER DELETE` trigger handles cleanup
+  as it already does.
+- No RPC needed — the client uses the same raw `group_members` delete the
+  RLS policy already permits; this new trigger is the only addition.
+
+**Client scope** (mirrors FT-9/FT-10's `features/groups/` conventions, no
+new route):
+- `features/groups/hooks/useLeaveGroup.ts` — `{ leaveGroup(groupId),
+  leaving, leaveErrorMessage }`. Calls `supabase.from('group_members')
+  .delete()` filtered to the caller's own row; maps the owner-guard's
+  Postgres error to a friendly message, distinct from a generic failure
+  message.
+- **Touches `GroupDetailScreen.tsx` (FT-9), additive only:** adds a
+  "Leave group" button, native `Alert.alert` destructive confirmation
+  before calling `leaveGroup`, inline error on failure. On success, calls
+  the screen's existing `useGroups()` `refetch()` (same cross-hook
+  coordination FT-10 established) and navigates back to the groups list.
+- No changes to `GroupsScreen.tsx`, `useGroups.ts`, or FT-9/FT-10's
+  hooks/components beyond the one additive button above.
+
+**Edge cases:**
+1. Sole member (owner or not) leaves — trigger allows it, FT-7's cascade
+   deletes the group as designed; client has already navigated away,
+   doesn't rely on the "not found" state.
+2. Owner leaves with others remaining — blocked server-side (defense in
+   depth, not just a client-side disable) with a friendly inline error.
+3. Non-owner leaves a group with others remaining — unaffected by the new
+   trigger, works as FT-7 already allows.
+4. Concurrent last-two-members-leave race — already covered by FT-7's
+   per-row `AFTER DELETE` semantics (documented in `0004_groups.sql`),
+   not new to this ticket.
+5. Leaving while another screen still references the group (e.g.
+   background tab) — same "group not found" handling FT-9 already built
+   into `GroupDetailScreen.tsx` for the auto-delete-mid-navigation case.
+
+**Out of scope:**
+- Owner-initiated explicit group delete (#10, "Still open") — separate
+  concern, not this ticket.
+- Ownership transfer — no mechanism exists to hand off `role = 'owner'`
+  to another member; the owner-guard above blocks the problematic case
+  rather than solving it. Worth its own future ticket if it becomes a
+  real need.
+- Owner-remove-member UI — RLS/grant already permit it
+  (`group_members_delete_self_or_owner`'s owner branch), but no button
+  exists; flagging alongside this ticket, not building it here.
+- Any change to `useGroups.ts`, `GroupsScreen.tsx`, invite tables/RPCs, or
+  FT-7's RLS policies beyond the one new trigger.
+
+**On-device verification:** Two Simulator instances, Account A owns a
+group Account B has joined. From B's device, open the group, tap Leave,
+confirm the dialog, confirm B lands back on their (now empty) groups list
+and the group is gone from B's list; confirm A still sees the group with
+B removed. Then, from A's device (the owner) with only A remaining in
+that group, tap Leave, confirm, confirm the group disappears from A's
+list too (auto-delete). Separately, create a second group with A as owner
+and B still a member, and confirm A tapping Leave produces an inline
+error and the group is untouched.
+
+---
+
 ## V3 — Geofencing *(blocked by v2)*
 
 | Ticket | Description | Depends on | Status |
@@ -433,6 +536,8 @@ Building against **Option A (GPS-derived, no new native dependency)** — do not
 - **Rename a group**: same shape as #10 — FT-7 already granted the owner `update (name)` permission and an owner-only RLS policy (`groups_update_owner`), but no ticket/UI exposes it. Flagged during FT-9 design, not blocking it.
 - **Rename yourself (display name)**: `profiles.display_name` is a real, user-editable column (RLS already allows a user to update their own row) — it's not derived from email, that's only the signup fallback when no name is provided. No ticket/UI lets a user change it after joining. Flagged during FT-9 design, not blocking it.
 - **No sign-out UI**: `AuthProvider.signOut()` (FT-2) works but nothing in any screen calls it — there is currently no way to sign out of the app short of deleting and reinstalling it. Discovered during FT-9 on-device QA (needed a second test account on the same device). Not blocking any currently-scoped ticket, but a real, everyday gap once this isn't a single-tester device.
+- **Owner-remove-member UI**: `group_members_delete_self_or_owner` (FT-7) already permits an owner to remove another member, but no button/screen exposes it. Same class of gap as #10/rename. Flagged during FT-11 design, not blocking it.
+- **Owner leaving a group with other members remaining**: FT-11 blocks this server-side rather than solving it (no ownership-transfer mechanism exists), which means an owner who wants out of a group whose other members won't leave currently has no way to do so. Needs a PO decision (auto-promote another member? explicit transfer?) — flagged during FT-11 design.
 
 ## Other flags worth remembering later
 - `location_history` has no retention/pruning policy — revisit before v5 ships at scale.
