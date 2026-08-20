@@ -15,6 +15,8 @@ At the start of a session (especially after /clear), before asking "what's next,
 
 # Notion board sync
 
-A Jira-style mirror of this roadmap lives in Notion: "Family Tracker Roadmap" (database id `7bfdc5cf697b4db1bfaf0d0b6d497e31`, data source `f24b3cb1-cda1-4fe9-bdad-7c8ccda86f61`) — a master board plus one filtered board per version (V1–V6) as swimlanes, columns by Status (`Done` / `Ready` / `Blocked`).
+A Jira-style mirror of this roadmap lives in Notion: "Family Tracker Roadmap" (database id `7bfdc5cf697b4db1bfaf0d0b6d497e31`, data source `f24b3cb1-cda1-4fe9-bdad-7c8ccda86f61`) — a master board plus one filtered board per version (V1–V6) as swimlanes, columns by Status (`Blocked` / `Ready` / `In Dev` / `Done`).
 
-None of the mobile-* subagents have Notion tool access, so this sync is done by the main session, not delegated. Once a ticket's pipeline-completion commit (`FT-N: Unit tests for ...`) lands, in that same turn: set that ticket's Notion page Status to `Done`, and check whether any ticket that listed it in "Depends On" should flip from `Blocked` to `Ready`.
+None of the mobile-* subagents have Notion tool access, so this sync is done by the main session, not delegated, at these points:
+- When mobile-senior-dev is handed a ticket to implement (start of that ticket's pipeline, before any code is written): set that ticket's Notion page Status to `In Dev`.
+- When the pipeline-completion commit (`FT-N: Unit tests for ...`) lands: set that ticket's Notion page Status to `Done`, and check whether any ticket that listed it in "Depends On" should flip from `Blocked` to `Ready`.
