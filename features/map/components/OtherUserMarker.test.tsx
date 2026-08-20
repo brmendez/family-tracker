@@ -11,7 +11,7 @@ jest.mock('react-native-maps', () => {
 
 import { render } from '@testing-library/react-native';
 
-import type { OtherUserLocation } from '../hooks/useOtherUserLocation';
+import type { OtherUserLocation } from '../hooks/useGroupMemberLocations';
 import { useLocationStaleness } from '../hooks/useLocationStaleness';
 import { OtherUserMarker } from './OtherUserMarker';
 

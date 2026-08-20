@@ -10,6 +10,9 @@ import { act } from '@testing-library/react-native';
 import type { AuthSession as Session, User } from '@supabase/supabase-js';
 
 import type { Profile } from '../context/auth.context';
+import type { ActiveGroupMember } from '../features/map/hooks/useActiveGroupMembers';
+import type { MembershipGroup } from '../context/groups.context';
+import type { OtherUserLocation } from '../features/map/hooks/useGroupMemberLocations';
 
 export const createUser = (id: string): User => ({
   id,
@@ -35,6 +38,40 @@ export const createProfile = (
   display_name: displayName,
   avatar_color: null,
   created_at: '2024-01-01T00:00:00.000Z',
+});
+
+export const createMembershipGroup = (
+  id: string,
+  name: string,
+  joinedAt: string = '2024-01-01T00:00:00.000Z',
+): MembershipGroup => ({
+  id,
+  name,
+  joinedAt,
+});
+
+export const createActiveGroupMember = (
+  id: string,
+  displayName: string,
+  avatarColor: string | null = '#ff0000',
+): ActiveGroupMember => ({
+  id,
+  displayName,
+  avatarColor,
+});
+
+export const createOtherUserLocation = (
+  latitude: number = 37.7749,
+  longitude: number = -122.4194,
+  recordedAt: string = '2024-01-01T00:00:00.000Z',
+  speedMps: number | null = 1.5,
+  headingDeg: number | null = 45,
+): OtherUserLocation => ({
+  latitude,
+  longitude,
+  recordedAt,
+  speedMps,
+  headingDeg,
 });
 
 /**

@@ -4,6 +4,7 @@ jest.mock('../../../lib/supabase');
 jest.mock('../../../context/auth.context');
 jest.mock('../hooks/useGroups');
 jest.mock('../hooks/usePendingInvites');
+jest.mock('../../../context/groups.context');
 // FT-11: useFocusEffect needs a real NavigationContainer to resolve
 // useNavigation(), which isn't present in these bare component renders.
 // Stub it to just run the effect immediately, like a plain useEffect —
@@ -15,6 +16,7 @@ jest.mock('expo-router', () => ({
 
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 
+import { useGroupsContext } from '../../../context/groups.context';
 import { useGroups } from '../hooks/useGroups';
 import { usePendingInvites } from '../hooks/usePendingInvites';
 import { GroupsScreen } from './GroupsScreen';
@@ -23,6 +25,7 @@ import type { PendingInvite } from '../hooks/usePendingInvites';
 
 const mockUseGroups = useGroups as jest.MockedFunction<typeof useGroups>;
 const mockUsePendingInvites = usePendingInvites as jest.MockedFunction<typeof usePendingInvites>;
+const mockUseGroupsContext = useGroupsContext as jest.MockedFunction<typeof useGroupsContext>;
 
 const createMockGroup = (
   id: string = 'group-1',
@@ -53,6 +56,7 @@ describe('GroupsScreen', () => {
   const mockCreateGroup = jest.fn();
   const mockRespond = jest.fn();
   const mockPendingRefetch = jest.fn();
+  const mockRefetchGroups = jest.fn();
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -62,10 +66,12 @@ describe('GroupsScreen', () => {
     mockCreateGroup.mockReset();
     mockRespond.mockReset();
     mockPendingRefetch.mockReset();
+    mockRefetchGroups.mockReset();
     mockRefetch.mockResolvedValue(undefined);
     mockCreateGroup.mockResolvedValue({ error: null });
     mockRespond.mockResolvedValue({ error: null });
     mockPendingRefetch.mockResolvedValue(undefined);
+    mockRefetchGroups.mockResolvedValue(undefined);
 
     // Default usePendingInvites mock: no pending invites
     mockUsePendingInvites.mockReturnValue({
@@ -77,6 +83,17 @@ describe('GroupsScreen', () => {
       respondingId: null,
       respondErrorMessage: null,
       respondErrorInviteId: null,
+    });
+
+    // Default useGroupsContext mock — FT-12's map group list, coordinated
+    // with here on create/accept.
+    mockUseGroupsContext.mockReturnValue({
+      groups: [],
+      activeGroupId: null,
+      setActiveGroupId: jest.fn(),
+      loading: false,
+      errorMessage: null,
+      refetchGroups: mockRefetchGroups,
     });
   });
 
@@ -364,6 +381,28 @@ describe('GroupsScreen', () => {
       // because groups.length > 0
       expect(screen.getByText('Family (owner)')).toBeTruthy();
     });
+
+    it('successful create also triggers GroupsProvider refetchGroups (FT-12)', async () => {
+      mockUseGroups.mockReturnValue({
+        groups: [],
+        loading: false,
+        errorMessage: null,
+        createGroup: mockCreateGroup,
+        creating: false,
+        createErrorMessage: null,
+        refetch: mockRefetch,
+      });
+      mockCreateGroup.mockResolvedValue({ error: null });
+
+      await render(<GroupsScreen />);
+
+      await act(async () => {
+        fireEvent.press(screen.getByText('Create'));
+      });
+
+      expect(mockCreateGroup).toHaveBeenCalled();
+      expect(mockRefetchGroups).toHaveBeenCalled();
+    });
   });
 
   describe('spinner suppression during create-triggered refetch', () => {
@@ -521,6 +560,9 @@ describe('GroupsScreen', () => {
 
       expect(mockRespond).toHaveBeenCalledWith('invite-1', 'accept');
       expect(mockRefetch).toHaveBeenCalled();
+      // FT-12: GroupsProvider's list must also learn about the new
+      // membership, or the map stays stale until the next app launch.
+      expect(mockRefetchGroups).toHaveBeenCalled();
     });
 
     it('successful decline does not trigger useGroups refetch', async () => {
