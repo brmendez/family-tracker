@@ -2,6 +2,8 @@
 import { Stack, useRouter } from 'expo-router';
 import { Pressable, StyleSheet, Text } from 'react-native';
 
+import { GroupsProvider } from '../../context/groups.context';
+
 /**
  * FT-8: route group for the signed-in app, mirroring (auth)'s layout
  * shape. headerShown: false is the default (same as (auth)); the map
@@ -9,6 +11,10 @@ import { Pressable, StyleSheet, Text } from 'react-native';
  * groups screen is its own nested Stack as of FT-9 (see
  * groups/_layout.tsx) since it now has list + detail screens, so it's
  * left at the default here and owns its own headers.
+ *
+ * FT-12: wraps the Stack in GroupsProvider. Mounted here rather than the
+ * root layout so it naturally remounts fresh on sign-out/sign-in via the
+ * existing Stack.Protected swap — no manual reset logic needed.
  */
 const AppLayout = () => {
   const router = useRouter();
@@ -20,16 +26,18 @@ const AppLayout = () => {
   );
 
   return (
-    <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen
-        name="index"
-        options={{
-          headerShown: true,
-          headerRight: renderGroupsButton,
-        }}
-      />
-      <Stack.Screen name="groups" />
-    </Stack>
+    <GroupsProvider>
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen
+          name="index"
+          options={{
+            headerShown: true,
+            headerRight: renderGroupsButton,
+          }}
+        />
+        <Stack.Screen name="groups" />
+      </Stack>
+    </GroupsProvider>
   );
 };
 

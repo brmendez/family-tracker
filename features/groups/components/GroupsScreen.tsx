@@ -11,6 +11,7 @@ import {
   View,
 } from 'react-native';
 
+import { useGroupsContext } from '../../../context/groups.context';
 import { useGroups } from '../hooks/useGroups';
 import { usePendingInvites } from '../hooks/usePendingInvites';
 import { CreateGroupForm } from './CreateGroupForm';
@@ -48,6 +49,11 @@ import { PendingInvitesSection } from './PendingInvitesSection';
  * FT-11: refetches on focus (not just mount) — GroupDetailScreen's Leave
  * flow navigates back here from a separate useGroups() instance, so this
  * screen's own list wouldn't otherwise learn about the departure.
+ *
+ * FT-12: a create or accept here also calls GroupsProvider's
+ * refetchGroups() — a third independent hook instance (the map's
+ * activeGroupId source) that would otherwise only learn about a new
+ * group on the next full app launch.
  */
 export const GroupsScreen = () => {
   const {
@@ -67,6 +73,8 @@ export const GroupsScreen = () => {
     respondErrorMessage,
     respondErrorInviteId,
   } = usePendingInvites();
+
+  const { refetchGroups } = useGroupsContext();
 
   const router = useRouter();
   const rootRef = useRef<View>(null);
@@ -91,6 +99,17 @@ export const GroupsScreen = () => {
 
     if (!error && decision === 'accept') {
       await refetch();
+      await refetchGroups();
+    }
+
+    return { error };
+  };
+
+  const handleCreateGroup = async (name: string) => {
+    const { error } = await createGroup(name);
+
+    if (!error) {
+      await refetchGroups();
     }
 
     return { error };
@@ -150,7 +169,7 @@ export const GroupsScreen = () => {
           </View>
 
           <CreateGroupForm
-            onCreate={createGroup}
+            onCreate={handleCreateGroup}
             creating={creating}
             createErrorMessage={createErrorMessage}
           />

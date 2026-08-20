@@ -46,6 +46,7 @@ lib/
 | 7 | v5 playback scope | Any group member can play back **any other member's** historical route within a shared group — not self-only. Must respect v4's visibility windows *as they were at that historical time*. This means **v5 is blocked by v2 and v4, not just v1's schema.** |
 | 8 | v1 password reset | Out of scope for v1 (2 known users, self-serviceable via Supabase dashboard). In scope starting v2, once groups introduce users outside the household. |
 | 9 | v6 speed/duration thresholds | **Deferred** — revisit when v6 starts. |
+| 11 | Cross-group visibility | **Locked (2026-08-20):** each group's membership is its own independent authorization boundary. Sharing group B with someone still lets them see your location even after you remove them from group A — removal from one group never revokes visibility granted by another shared group. The map's per-group switcher (#4) is a display filter only, not a visibility control; it doesn't affect who can see you. |
 
 ## Locked schema consequence (from #6 + #7 combined)
 Answer #7 means "was this person hidden from this group at 3pm last Tuesday" has to be answerable later, not just "are they hidden right now." A simple current-state flag that gets overwritten on every hide/unhide can't answer that. So **both the per-group visibility override (v4) and the global visibility flag (v4) must be event-sourced (append-only log of hide/unhide events)**, same pattern as `location_history` already uses, for the same reason. This is locked in for FT-19/FT-21 below — do not implement as a simple upsert row.
@@ -486,6 +487,141 @@ error and the group is untouched.
 
 ---
 
+### FT-12 detail — Group-scoped location visibility
+
+**Type:** Feature
+
+**Why:** `location_history`'s SELECT policy (`0002_location_history.sql`) is
+still `using (true)` — every authenticated user can read every row, a v1
+hardcode that predates groups entirely (its own comment already flags this:
+"narrows in FT-12 — not this ticket's concern," referring to itself).
+Likewise `useOtherProfile`/`useOtherUserLocation` hardcode "the one other
+profile" — `useOtherProfile`'s own comment says a third profile's result is
+"undefined... accepted v1 limitation" pending this ticket. FT-12 replaces
+both: RLS narrows to shared group membership, and the map generalizes from
+"the other user" to "the active group's other members," switchable per
+decision #4.
+
+**Schema:** No new tables/columns. One new SECURITY DEFINER helper
+alongside FT-7's `is_group_member`/`is_group_owner`.
+
+**RLS / grants** (new migration `0008_group_scoped_location_visibility.sql`,
+doesn't touch `0002_location_history.sql`):
+- `public.shares_group_with(p_user_id uuid) returns boolean` — stable,
+  pinned `search_path`, same hardening as FT-7's helpers. Existing
+  `is_group_member(group_id)` checks membership in *one named* group; this
+  checks "is there *any* group both `auth.uid()` and `p_user_id` belong
+  to" — a genuinely different predicate FT-7 doesn't provide, needed here.
+- Drops `location_history_select_authenticated`; replaces with
+  `location_history_select_shared_group_member`: `using (auth.uid() =
+  user_id or public.shares_group_with(user_id))`. The self-clause is
+  load-bearing, not redundant — a user in zero groups must still always
+  read their own rows.
+- No grant changes (`select, insert` to `authenticated` already exists);
+  INSERT policy (own rows only) is untouched.
+- No new index — `group_members`'s existing PK `(group_id, user_id)` and
+  `group_members_user_id_idx` (both from FT-7) already cover the join.
+
+**RLS scope — confirmed by PO, locked as decision #11:** the policy gates
+on *any* shared group, not the caller's currently-*active* one. Two users
+who share Group A and B can always see each other's location, even while
+one has Group B selected in the switcher — the switcher is a display
+filter, not an authorization boundary, and each group's membership is an
+independent visibility grant (removing someone from Group A does not
+revoke visibility they still have via shared Group B).
+
+**Client scope:**
+- `context/groups.context.tsx` (new) — `GroupsProvider`. Runs its own
+  minimal `group_members` → `groups` query (`id, name, joined_at` only) on
+  mount, exposing `{ groups, activeGroupId, setActiveGroupId, loading,
+  errorMessage, refetchGroups }`. Persists `activeGroupId` via the
+  project's existing `@react-native-async-storage/async-storage` dependency
+  (already used by `lib/supabase.ts` for session persistence, same
+  read-on-mount/write-on-change pattern): on mount, reads the stored id and
+  uses it if it's still present in the fresh `groups` fetch; `setActiveGroupId`
+  writes through to storage as well as state. Falls back to the
+  earliest-joined group whenever there's no stored id, or the stored id is
+  null/no longer present in a fresh fetch (covers first load and having
+  left/lost access to the previously-active group). Deliberately does
+  **not** reuse `features/groups/hooks/useGroups.ts`
+  — same layering precedent as `AuthProvider` fetching its own `profiles`
+  row directly rather than depending on a feature hook; context is a lower
+  layer than features and shouldn't import from one. `useGroups.ts` is
+  unchanged, still owns the richer groups-management screens.
+- `app/(app)/_layout.tsx` — touched, additive only: wraps the existing
+  `Stack` in `<GroupsProvider>`. No header/route logic changes. Mounting it
+  here (not root `_layout.tsx`) means it naturally remounts fresh on
+  sign-out/sign-in via the existing `Stack.Protected` swap — no manual
+  reset logic needed.
+- `features/map/hooks/useActiveGroupMembers.ts` (new, **replaces**
+  `useOtherProfile.ts`, deleted) — given `activeGroupId`, fetches
+  `group_members` joined to `profiles` for that group excluding self:
+  `{ id, displayName, avatarColor }[]`. Refetches on screen focus (new
+  pattern for this screen, mirrors `GroupsScreen`'s FT-11 focus-refetch).
+- `features/map/hooks/useGroupMemberLocations.ts` (new, **replaces**
+  `useOtherUserLocation.ts`, deleted) — given `memberIds: string[]`: one
+  initial query (`.in('user_id', memberIds)`, reduced client-side to
+  latest per id), then **one** realtime channel subscribed to
+  `postgres_changes` INSERT on `location_history` with **no row filter** —
+  RLS (this ticket's new policy) already scopes which INSERTs the
+  subscriber ever receives, so an unfiltered channel is both simpler than
+  N per-member channels and correctly bounded by the same authorization
+  the client uses for reads. Events for ids outside the current
+  `memberIds` set are ignored client-side. Effect resets on `memberIds`
+  change (mirrors `useOtherUserLocation`'s per-id cleanup). Returns `{
+  locations: Record<string, OtherUserLocation>, loading, errorMessage }`.
+- `features/map/components/GroupSwitcher.tsx` (new) — controlled props
+  (`groups`, `activeGroupId`, `onSelect`); renders nothing when
+  `groups.length < 2` (a single-group household sees no switcher chrome).
+- `FamilyMap.tsx` — rewritten to compose `useGroupsContext()` +
+  `useActiveGroupMembers(activeGroupId)` + `useGroupMemberLocations`,
+  rendering `<GroupSwitcher>` plus one `<OtherUserMarker>` per member with
+  a known location. `OtherUserMarker.tsx` and `useLocationStaleness.ts`
+  (FT-28) are reused unchanged, just applied per-member now instead of to
+  one hardcoded other user. Empty-state copy changes from "Waiting for
+  {name}'s first update" to a generic "No other members here yet" (zero
+  members) / "Join or create a group to see family members" (zero groups)
+  — own marker always renders regardless.
+
+**Edge cases:**
+1. No shared group between two users (including v1's original pair, if
+   they aren't already in a common group) — marker simply doesn't appear;
+   not a bug, but a real behavior cliff the moment this migration ships.
+2. Active group has no other members — own marker only, empty-state text.
+3. Zero groups at all — switcher hidden, own marker only.
+4. Switching `activeGroupId` — member list and locations fully reset (not
+   merged), no stale markers bleed across groups.
+5. Leaving/joining the active group, or a new member joining, while the
+   map is open — not live; resolves on next focus of the map screen via
+   the same refetch-on-focus pattern, not mid-session. Acceptable, flagged
+   rather than solved live (no `group_members` realtime subscription here).
+6. Stored `activeGroupId` points to a group the user has since left —
+   falls back to earliest-joined, same as having no stored id at all.
+
+**Out of scope:**
+- Per-group/global invisibility overrides (FT-19/20/21) — this ticket is
+  authorization (shared group or not), not hide/unhide semantics.
+- Historical/playback visibility (FT-22/23) — only the live latest-location
+  read path is touched.
+- Any change to `location_history` INSERT policy, grants, or
+  `useLocationHistoryWriter`.
+- Group create/join/invite/leave UI — unchanged from FT-8/9/10/11; the
+  switcher only selects among groups the user is already in.
+
+**On-device verification:** With Accounts A and B both already in their
+existing "Family" group, confirm the map behaves as before (each sees the
+other's live marker, no switcher chrome — only one group). Create a second
+group on A containing only A; confirm the switcher now appears on A's map,
+and selecting the new group shows A's own marker with no others. Switch
+back to "Family," confirm B reappears. Have B leave "Family" (FT-11), then
+on A's device navigate away from and back to the map screen — confirm B's
+marker disappears without an app restart. Confirm A's own marker is always
+visible in every group, including the solo one. Separately, with the solo
+group selected, force-quit and relaunch the app — confirm it reopens on
+the solo group, not back to "Family."
+
+---
+
 ## V3 — Geofencing *(blocked by v2)*
 
 | Ticket | Description | Depends on | Status |
@@ -549,3 +685,4 @@ Building against **Option A (GPS-derived, no new native dependency)** — do not
 - **Future: avatar markers.** Eventual direction (not yet scoped to a ticket) is for both yourself and other group members to be represented on the map by profile picture, not a generic pin or the native blue dot — closer to a "chat bubble"/Life360-style avatar marker. This affects FT-4/FT-6 implementation choices now: use a plain `Marker` (customizable) for yourself rather than `MapView`'s `showsUserLocation` blue dot, even though the blue dot is simpler today, so the later upgrade to an avatar image is additive rather than a rework. `profiles.avatar_color` already exists as a placeholder for visual identity (FT-2) — a future `avatar_url` column is the natural next step whenever this gets scoped for real.
 - **FT-28's 15-minute staleness threshold is tuned for the current foreground-only reality** (no background location writer exists until FT-18, which is scoped to geofencing only, not general broadcast). If background location tracking is ever broadened beyond FT-18's narrow use case, this threshold should be revisited — a background-tracked app would make "stale" a much rarer, more meaningful signal than it is today.
 - **Flaky loading-state tests**: `useSendInvite.test.ts` (FT-9) and `useLeaveGroup.test.ts` (FT-11) both race a real `setTimeout(..., 100)` against `waitFor` to catch a hook's mid-flight loading state — occasionally times out under CPU load in full-suite runs. Not a correctness bug, just test timing. Worth a cleanup pass (deterministic manually-controlled promise instead of a real timer) if it starts causing CI noise. Found during FT-11 verification (2026-08-19).
+- **`GroupSwitcher`'s pill-row styling should become a proper select/dropdown** once a user is likely to belong to more than a handful of groups — a horizontal scrolling pill row (FT-12) doesn't scale well past a few groups. Flagged during FT-12 on-device QA (2026-08-20), not blocking.

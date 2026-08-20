@@ -2,7 +2,7 @@
 import { Marker } from 'react-native-maps';
 
 import { useLocationStaleness } from '../hooks/useLocationStaleness';
-import type { OtherUserLocation } from '../hooks/useOtherUserLocation';
+import type { OtherUserLocation } from '../hooks/useGroupMemberLocations';
 
 type OtherUserMarkerProps = {
   displayName: string;
