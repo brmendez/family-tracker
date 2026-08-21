@@ -628,7 +628,8 @@ the solo group, not back to "Family."
 | Ticket | Description | Depends on | Status |
 |---|---|---|---|
 | FT-13 | Schema: `geofences` + `geofence_events`, group-scoped | FT-7 | ✅ Done |
-| FT-14 | Create/manage geofence (foreground) | FT-13, FT-12 | ⬜ |
+| FT-14 | Create/manage geofence (foreground) | FT-13, FT-9 | ⬜ |
+| FT-14b | Autocomplete upgrade for geofence address search (FT-14 already ships exact-match search + map long-press) | FT-14 | ⬜ |
 | FT-15 | Push notification infrastructure (shared primitive — reused later by v6) | FT-2 | ⬜ |
 | FT-16 | Foreground geofence detection + in-app alert | FT-14, FT-6 | ⬜ |
 | FT-17 | Push notification on entry/exit (server-triggered webhook) | FT-15, FT-16 | ⬜ |
@@ -691,6 +692,58 @@ No denormalized `group_id` column on `geofence_events` — membership is derived
 
 ---
 
+### FT-14 detail — Create/manage geofence (foreground)
+
+**Type:** Feature
+
+**Why:** FT-13 landed the `geofences` table (RLS: any member creates; creator-or-owner edits/deletes) but nothing reads or writes it yet. FT-14 is the CRUD surface — list a group's zones, create, edit (name/location/radius), delete. No detection (FT-16/FT-18) and no zone overlay on the map — data management only, reached from a group's detail screen (not the map).
+
+**Depends on correction:** roadmap row (line 631) lists `FT-13, FT-12` — should be `FT-13, FT-9`. Geofences are managed from the group detail screen where invites (FT-9) and leave (FT-11) already live, not from the map's active-group filter (FT-12). Doesn't change sequencing (both Done already), just an accuracy fix.
+
+**Location/radius input — locked by PO (2026-08-20), decision #13:** two entry paths, both ship in FT-14, sharing one marker + radius slider:
+- **Map long-press** — `react-native-maps`'s `onLongPress` (already available, no new library) drops/moves the marker.
+- **Exact-address search** — a text field + "Search" button (explicit submit, not typeahead) calling `expo-location`'s `geocodeAsync(address)`, on-device, free, no API key/provider needed (already a dependency). First result drops/moves the marker. No suggestions dropdown — that's the autocomplete upgrade, split to FT-14b below since it needs an external provider decision.
+
+Radius slider (`@react-native-community/slider`, new dependency): **250 ft to 10,600 ft, default 1,000 ft** — converted to/from `radius_m` for storage, displayed in feet. 250 ft (~76m) sits above iOS's ~100–150m accuracy floor, so no separate warning/floor UI is needed; the slider's own minimum is the enforcement.
+
+**Data flow** (against FT-13's schema — plain grants, no RPC, so none added here): list = `select * from geofences where group_id = :groupId` (RLS already scopes to membership); create = `insert` with `created_by` set client-side to the caller's id (required — RLS `with check` rejects a mismatch); edit = `update` on the four FT-13 granted columns (name, latitude, longitude, radius_m); delete = plain `delete`. RLS gates who succeeds in every case.
+
+**Client scope** (`features/geofencing/`):
+- Routes: `app/(app)/geofences/[groupId]/index.tsx` (list), `.../new.tsx`, `.../[geofenceId].tsx` (edit) — own `_layout.tsx` mirroring `groups/_layout.tsx`; `(app)/_layout.tsx` gets an additive `<Stack.Screen name="geofences" />`.
+- `GroupDetailScreen.tsx` (FT-9) gets an additive "Manage Zones" button navigating to `/geofences/${group.id}?role=${group.role}` — `role` rides as a route param (already fetched there) rather than a new hook or cross-feature import. Display hint only; every write still RLS-gated.
+- `GeofenceListScreen` — zones for `groupId`; Edit/Delete shown only when `createdBy === userId || role === 'owner'`; other rows read-only. Empty state: "No zones yet for this group."
+- `GeofenceFormScreen` — one component, optional `geofenceId` distinguishes create/edit; name field non-empty check (same class as `InviteForm`); map + address-search + radius slider per decision #13; delete in edit mode behind the same ownership check, native `Alert.alert` confirm (mirrors `useLeaveGroup`).
+- `useGeofences.ts` (list, refetch-on-focus like `GroupsScreen`), `useCreateGeofence.ts`, `useUpdateGeofence.ts`, `useDeleteGeofence.ts`, `useGeocodeAddress.ts` (thin `geocodeAsync` wrapper: address in, `{ latitude, longitude } | null` out, loading/error state) — one hook per concern, same granularity as `useSendInvite`/`useLeaveGroup`.
+- `types/geofence.types.ts` — `Geofence = { id, groupId, name, latitude, longitude, radiusM, createdBy, createdAt }`, camelCase-mapped like `Group`.
+
+**Permissions:** None new — `(app)` already requires foreground location permission (FT-3/FT-4), which is all a long-press-to-drop-a-marker map needs; no additional permission surface.
+
+**Edge cases:**
+1. Non-owner member sees every zone (read is unrestricted to members) but no Edit/Delete on rows they don't own; a forced write attempt is rejected server-side anyway.
+2. Creator leaves the group but it persists — already loses select/edit rights server-side (FT-13); zone just stops appearing in their list on next fetch.
+3. Zone edited/deleted by someone else while this screen is open — not live, resolves on next focus (same accepted gap as FT-12's edge case #5).
+4. Duplicate zone names within a group — allowed; name is a label, not an identity key.
+
+**Out of scope:** foreground/background detection (FT-16/FT-18), push on entry/exit (FT-17); zone overlay on `FamilyMap.tsx`; any change to FT-13's schema/RLS; admin/co-owner role or ownership transfer (same gap class as FT-11); autocomplete-as-you-type address search (split to FT-14b — this ticket's address search is exact-match only).
+
+**On-device verification:** Owner (A) opens group detail → Manage Zones → creates a zone → confirm it appears and edits persist after navigating away/back. Non-owner member (B), same group: sees A's zone with no Edit/Delete, can create and edit/delete their own. A can edit/delete B's zone (owner override). Delete a zone from A → disappears from both lists on next focus. B leaves the group → A's list unaffected, B can no longer reach that group's zones route.
+
+### FT-14b detail — Autocomplete upgrade for geofence address search
+
+**Type:** Feature (upgrades FT-14's exact-match address search to as-you-type suggestions)
+
+**Why:** FT-14 ships exact-address search via `expo-location`'s on-device `geocodeAsync` — type a full address, get one result, no suggestions. FT-14b upgrades that to a narrowing dropdown of candidates as the user types, which needs an external places-autocomplete provider (on-device geocoding has no typeahead/suggestion capability). Split out during FT-14 design so the provider/key decision doesn't block FT-14, and because FT-14's exact-match search already covers the core need.
+
+**OPEN — needs a locked PO decision before implementation:** which provider? Google Places Autocomplete (widest coverage, billed API beyond a free tier, needs a Google Cloud project + key) vs. Mapbox Search API (similar shape, separate account/key). Both are plain HTTP APIs — same client integration on iOS/Android. (Apple's `MKLocalSearchCompleter` was considered and rejected: iOS-only, no Android path, moot anyway since Android is currently out of scope for the whole roadmap — see "Other flags.") Not choosing here since it's a billing/account decision, not an architectural one.
+
+**Client scope:** one new component in `features/geofencing/` — an address text input above/alongside FT-14's map, wired to a new `useAddressAutocomplete(query)` hook: debounced (don't fire per keystroke) and **AbortController-cancelled** on each new query so a slow stale response can't overwrite a newer result set. Renders a dropdown of narrowing suggestions below the input; selecting one resolves to a place (a second "place details" call for most providers, since autocomplete predictions return text + an opaque id, not raw coordinates) and drops/moves FT-14's marker to that point — the rest of the form (name, radius slider, save) is unchanged and shared with FT-14.
+
+**New surface:** provider API key (new `.env` entry, follow this repo's existing `.env.example` pattern); new failure states (no network, zero results, rate-limited/quota-exceeded, provider timeout); if Google Places, session-token handling so the autocomplete + details calls bill as one session instead of two.
+
+**Out of scope:** the provider account/billing setup itself (a one-time manual step, not a code task); any change to FT-13's schema (still just lat/lng/radius_m) or FT-14's map long-press path, which remains available alongside this.
+
+---
+
 ## V4 — Per-Group Visibility Controls *(blocked by v2)*
 
 | Ticket | Description | Depends on | Status |
@@ -731,6 +784,7 @@ Building against **Option A (GPS-derived, no new native dependency)** — do not
 - **Owner-remove-member UI**: `group_members_delete_self_or_owner` (FT-7) already permits an owner to remove another member, but no button/screen exposes it. Same class of gap as #10/rename. Flagged during FT-11 design, not blocking it.
 - **Owner leaving a group with other members remaining**: FT-11 blocks this server-side rather than solving it (no ownership-transfer mechanism exists), which means an owner who wants out of a group whose other members won't leave currently has no way to do so. Needs a PO decision (auto-promote another member? explicit transfer?) — flagged during FT-11 design.
 - **FT-11's owner-guard trigger vs. #10 (explicit group delete)**: `prevent_ownerless_group_leave` (FT-11) fires on any `group_members` delete, including FK cascades. If #10 is ever built as "owner explicitly deletes the group" while other members still exist, the cascade delete of the owner's own `group_members` row would hit this same guard and could block the cascade, leaving the `groups` row orphaned. Flagged during FT-11 code review — #10's implementation needs to either bypass this trigger for group-delete-initiated cascades or handle it in its own RPC.
+- **Address-search provider for FT-14b**: needs a locked decision on Google Places Autocomplete vs. Mapbox Search API (account/key, not architecture). Blocks only FT-14b, not FT-14. See FT-14b detail.
 
 ## Other flags worth remembering later
 - `location_history` has no retention/pruning policy — revisit before v5 ships at scale.
