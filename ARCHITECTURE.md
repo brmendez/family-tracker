@@ -627,7 +627,7 @@ the solo group, not back to "Family."
 
 | Ticket | Description | Depends on | Status |
 |---|---|---|---|
-| FT-13 | Schema: `geofences` + `geofence_events`, group-scoped | FT-7 | ⬜ |
+| FT-13 | Schema: `geofences` + `geofence_events`, group-scoped | FT-7 | ✅ Done |
 | FT-14 | Create/manage geofence (foreground) | FT-13, FT-12 | ⬜ |
 | FT-15 | Push notification infrastructure (shared primitive — reused later by v6) | FT-2 | ⬜ |
 | FT-16 | Foreground geofence detection + in-app alert | FT-14, FT-6 | ⬜ |
