@@ -628,8 +628,8 @@ the solo group, not back to "Family."
 | Ticket | Description | Depends on | Status |
 |---|---|---|---|
 | FT-13 | Schema: `geofences` + `geofence_events`, group-scoped | FT-7 | ✅ Done |
-| FT-14 | Create/manage geofence (foreground) | FT-13, FT-9 | ⬜ |
-| FT-14b | Autocomplete upgrade for geofence address search (FT-14 already ships exact-match search + map long-press) | FT-14 | ⬜ |
+| FT-14 | "Places" — create/manage geofences from the main map (foreground) | FT-13, FT-12 | ⬜ |
+| FT-14b | Autocomplete/named-place upgrade for Places address search (v1 ships exact-address geocoding only) | FT-14 | ⬜ |
 | FT-15 | Push notification infrastructure (shared primitive — reused later by v6) | FT-2 | ⬜ |
 | FT-16 | Foreground geofence detection + in-app alert | FT-14, FT-6 | ⬜ |
 | FT-17 | Push notification on entry/exit (server-triggered webhook) | FT-15, FT-16 | ⬜ |
@@ -692,55 +692,74 @@ No denormalized `group_id` column on `geofence_events` — membership is derived
 
 ---
 
-### FT-14 detail — Create/manage geofence (foreground)
+### FT-14 detail — "Places": create/manage geofences from the main map (foreground)
 
 **Type:** Feature
 
-**Why:** FT-13 landed the `geofences` table (RLS: any member creates; creator-or-owner edits/deletes) but nothing reads or writes it yet. FT-14 is the CRUD surface — list a group's zones, create, edit (name/location/radius), delete. No detection (FT-16/FT-18) and no zone overlay on the map — data management only, reached from a group's detail screen (not the map).
+**Why:** FT-13 landed the `geofences` table (RLS: any member creates; creator-or-owner edits/deletes) but nothing reads or writes it yet. FT-14 is the CRUD surface, user-facing name **"Places"** (UI copy only — table stays `geofences`, folder stays `features/geofencing/`). Superseded design as of 2026-08-21: an earlier group-detail-screen-driven build was implemented and reviewed, then discarded in favor of this map-first flow after extended PO design review — see "Design history" below.
 
-**Depends on correction:** roadmap row (line 631) lists `FT-13, FT-12` — should be `FT-13, FT-9`. Geofences are managed from the group detail screen where invites (FT-9) and leave (FT-11) already live, not from the map's active-group filter (FT-12). Doesn't change sequencing (both Done already), just an accuracy fix.
+**Design history:** the first pass (group detail → "Manage Zones" button → list/form screens, long-press-to-place marker) passed code review but was replaced before testing/commit once the PO worked through the actual UX in detail. The data-layer hooks survived unchanged (`useGeofences`, `useCreateGeofence`, `useUpdateGeofence`, `useDeleteGeofence`, `useGeocodeAddress`, `geofence.types.ts`, `radius.ts` in `features/geofencing/`) — only the screens/routes/entry-point below are new. The old screens/routes (`app/(app)/geofences/[groupId]/...`) and `GroupDetailScreen.tsx`'s "Manage Zones" button are left in place as a working fallback through the build (so there's always some way to create test data) and get deleted as the last step, once this design has full parity on-device.
 
-**Location/radius input — locked by PO (2026-08-20), decision #13:** two entry paths, both ship in FT-14, sharing one marker + radius slider:
-- **Map long-press** — `react-native-maps`'s `onLongPress` (already available, no new library) drops/moves the marker.
-- **Exact-address search** — a text field + "Search" button (explicit submit, not typeahead) calling `expo-location`'s `geocodeAsync(address)`, on-device, free, no API key/provider needed (already a dependency). First result drops/moves the marker. No suggestions dropdown — that's the autocomplete upgrade, split to FT-14b below since it needs an external provider decision.
+**Entry point — locked by PO (2026-08-21):** a "Places" button on the main map screen (`FamilyMap.tsx`), **hidden whenever `activeGroupId` is null** (zero groups — mirrors `GroupSwitcher`'s own decision #4 "render nothing rather than empty chrome"). Visible whenever the user has at least one group, including the single-group case where `GroupSwitcher`'s pill itself stays hidden. A place is associated with whatever group is currently active in `GroupsContext` (`activeGroupId`) — no route param needed, unlike the discarded design's `/geofences/${group.id}` link. Places cannot exist without a group at the schema level (`geofences.group_id` is `not null`, RLS-gated on membership), so hiding the entry point when there's no active group isn't a UX nicety, it's a hard requirement.
 
-Radius slider (`@react-native-community/slider`, new dependency): **250 ft to 10,600 ft, default 1,000 ft** — converted to/from `radius_m` for storage, displayed in feet. 250 ft (~76m) sits above iOS's ~100–150m accuracy floor, so no separate warning/floor UI is needed; the slider's own minimum is the enforcement.
+**UX flow — locked by PO (2026-08-21):**
+1. Tap "Places" → **Places list** (overlay/modal over the map): plain list of existing places for the active group, plus "+ Add Place." No map on this screen.
+2. "+ Add Place" → **Add Place**: a name field, and location set via *either* typing an address *or* tapping "Select on Map" (not both at once). Radius is **not** adjustable here — always defaults to 1,000 ft on creation; only becomes editable afterward.
+   - **Address path:** text field, explicit "Search" (not typeahead — see FT-14b), `expo-location`'s `geocodeAsync`. Name field defaults to the matched address text but is user-editable before saving.
+   - **"Select on Map" path:** opens the `MapLocationPicker` (below) full-screen/modal, seeded at the user's current location, default radius. User pans, taps "Next" to confirm → returns to Add Place with location set; name still editable there.
+   - Saving (either path) creates the place and returns to **the main map**, not the list — the new place is now visible as a pin there.
+3. **Main map integration:** place pins render on `FamilyMap.tsx` for the active group (additive to existing member pins). Tapping a pin shows a `react-native-maps` `Callout` (native tap-marker popup, no extra library) with the place's name and an "Edit" button.
+4. **Edit** (reached via the list row *or* the map pin's Callout → Edit — same screen either way): shows `MapLocationPicker` **inline, not behind a tap** (there's already a location to display, unlike Add Place's explicit either/or choice) — pre-centered on the place's current location and radius, live-pannable to reposition. Below it: Label/Name field, an **Address row** that opens a shared `AddressSearchModal` (same address-search mechanism as Add Place) as an alternate way to jump the picker's center, and the **radius slider** (kept in sync with the picker's live circle). Actions: Cancel, Save, and below that, Delete Place.
 
-**Data flow** (against FT-13's schema — plain grants, no RPC, so none added here): list = `select * from geofences where group_id = :groupId` (RLS already scopes to membership); create = `insert` with `created_by` set client-side to the caller's id (required — RLS `with check` rejects a mismatch); edit = `update` on the four FT-13 granted columns (name, latitude, longitude, radius_m); delete = plain `delete`. RLS gates who succeeds in every case.
+**`MapLocationPicker` — the shared, reusable core** (used both full-screen by "Select on Map" and inline by Edit): a fixed pin at screen-center — plain absolutely-positioned overlay `View`, never map-bound, so it truly never moves — with the map panning freely underneath. The radius circle is **also** a screen-space overlay (not a `react-native-maps` `Circle`), sized in pixels from `radiusM` using `region.latitudeDelta` and the map's measured render height (meters-per-latitude-degree is ~constant, ≈111,320m, so no longitude/cos-latitude correction needed), recalculated on **every** `onRegionChange` (not just `onRegionChangeComplete`) so it visibly tracks live while panning rather than snapping into place only on release — locked by PO 2026-08-21 after evaluating the cheaper "native `Circle`, updates on release only" alternative and preferring the live-tracking feel. Whatever the map's center is when panning stops (`onRegionChangeComplete`) **is** the selected lat/lng — captured directly from `region`, no separate tap-to-confirm on the map itself.
 
-**Client scope** (`features/geofencing/`):
-- Routes: `app/(app)/geofences/[groupId]/index.tsx` (list), `.../new.tsx`, `.../[geofenceId].tsx` (edit) — own `_layout.tsx` mirroring `groups/_layout.tsx`; `(app)/_layout.tsx` gets an additive `<Stack.Screen name="geofences" />`.
-- `GroupDetailScreen.tsx` (FT-9) gets an additive "Manage Zones" button navigating to `/geofences/${group.id}?role=${group.role}` — `role` rides as a route param (already fetched there) rather than a new hook or cross-feature import. Display hint only; every write still RLS-gated.
-- `GeofenceListScreen` — zones for `groupId`; Edit/Delete shown only when `createdBy === userId || role === 'owner'`; other rows read-only. Empty state: "No zones yet for this group."
-- `GeofenceFormScreen` — one component, optional `geofenceId` distinguishes create/edit; name field non-empty check (same class as `InviteForm`); map + address-search + radius slider per decision #13; delete in edit mode behind the same ownership check, native `Alert.alert` confirm (mirrors `useLeaveGroup`).
-- `useGeofences.ts` (list, refetch-on-focus like `GroupsScreen`), `useCreateGeofence.ts`, `useUpdateGeofence.ts`, `useDeleteGeofence.ts`, `useGeocodeAddress.ts` (thin `geocodeAsync` wrapper: address in, `{ latitude, longitude } | null` out, loading/error state) — one hook per concern, same granularity as `useSendInvite`/`useLeaveGroup`.
-- `types/geofence.types.ts` — `Geofence = { id, groupId, name, latitude, longitude, radiusM, createdBy, createdAt }`, camelCase-mapped like `Group`.
+Radius bounds unchanged from the original decision: **250 ft to 10,600 ft, default 1,000 ft** (`@react-native-community/slider`, already added as a dependency), converted to/from `radius_m` for storage. 250 ft (~76m) sits above iOS's ~100–150m accuracy floor.
 
-**Permissions:** None new — `(app)` already requires foreground location permission (FT-3/FT-4), which is all a long-press-to-drop-a-marker map needs; no additional permission surface.
+**Address search is exact-match only in v1** — `geocodeAsync` resolves postal addresses, not business/place names ("123 Main St" works, "Spaghetti Factory" does not). Named-place search needs a places-autocomplete provider — that's FT-14b, unchanged in scope, just now feeding `AddressSearchModal` instead of the discarded `GeofenceFormScreen`.
+
+**Data flow** (against FT-13's schema — plain grants, no RPC): list = `select * from geofences where group_id = :activeGroupId` (RLS scopes to membership); create = `insert` with `created_by` set client-side to the caller's id (required — RLS `with check` rejects a mismatch); edit = `update` on the four FT-13 granted columns; delete = plain `delete`. Unchanged from the discarded design; hooks are reused as-is.
+
+**Client scope** (`features/geofencing/`, routes under `app/(app)/places/`, modal-presented over the map so it doesn't replace it):
+- Routes: `_layout.tsx` (Stack, modal presentation), `index.tsx` → `PlacesListScreen`, `new.tsx` → `AddPlaceScreen`, `[placeId].tsx` → `EditPlaceScreen`. "Select on Map" and address search are **not separate routes** — expo-router has no first-class "return a value from a pushed screen" mechanism, so both are local modal state within their parent screen (`AddPlaceScreen`/`EditPlaceScreen` render `MapLocationPicker`/`AddressSearchModal` conditionally, not via navigation).
+- `MapLocationPicker.tsx` — the fixed-pin/live-circle/pan core described above; takes `initialRegion`, `initialRadiusM`, `onChange(coords)`; a `mode: 'modal' | 'inline'` prop covers the two presentations (full-screen with a "Next" button vs. embedded directly in `EditPlaceScreen`).
+- `AddressSearchModal.tsx` — shared by `AddPlaceScreen`'s address path and `EditPlaceScreen`'s address row; text field + "Search" + `useGeocodeAddress`.
+- `PlacesListScreen.tsx`, `AddPlaceScreen.tsx`, `EditPlaceScreen.tsx` as described in the UX flow above.
+- `FamilyMap.tsx` (FT-4/6, existing) gets additive place-pin rendering (fetched via `useGeofences(activeGroupId)`) and the `Callout`-based Edit entry point; a "Places" button additive to its header/controls, gated on `activeGroupId`.
+- Existing hooks/types unchanged: `useGeofences`, `useCreateGeofence`, `useUpdateGeofence`, `useDeleteGeofence`, `useGeocodeAddress`, `geofence.types.ts`, `radius.ts`.
+
+**Build order (piece by piece, on-device sign-off between each; one formal review→test→commit pipeline at the end, not per piece):**
+1. Places list + "Places" entry point on the main map (gated on `activeGroupId`). No map yet.
+2. Add Place via address (name defaults from address, editable; save at default radius).
+3. "Select on Map" (`MapLocationPicker` in modal mode) wired into Add Place as the alternate location method.
+4. Edit screen (`MapLocationPicker` in inline mode + name + address row + radius slider + Cancel/Save/Delete), reached from the list.
+5. Main map integration (place pins + `Callout` + Edit entry point on `FamilyMap.tsx`) — **and, once this has full parity with the old flow, delete the discarded `app/(app)/geofences/[groupId]/...` routes, `GeofenceListScreen`/`GeofenceFormScreen`, and `GroupDetailScreen.tsx`'s "Manage Zones" button** as the final step of this piece.
+
+**Permissions:** None new — `(app)` already requires foreground location permission (FT-3/FT-4), which is all `MapLocationPicker` needs.
 
 **Edge cases:**
-1. Non-owner member sees every zone (read is unrestricted to members) but no Edit/Delete on rows they don't own; a forced write attempt is rejected server-side anyway.
-2. Creator leaves the group but it persists — already loses select/edit rights server-side (FT-13); zone just stops appearing in their list on next fetch.
-3. Zone edited/deleted by someone else while this screen is open — not live, resolves on next focus (same accepted gap as FT-12's edge case #5).
-4. Duplicate zone names within a group — allowed; name is a label, not an identity key.
+1. Non-owner member sees every place (read is unrestricted to members) but no Edit/Delete affordance on rows they don't own; a forced write attempt is rejected server-side anyway. (Ownership-gated UI, exact rule TBD alongside piece 4/5 — carries over the discarded design's `createdBy === userId || role === 'owner'` check.)
+2. Creator leaves the group but it persists — already loses select/edit rights server-side (FT-13); place just stops appearing in their list/map on next fetch.
+3. Place edited/deleted by someone else while a screen is open — not live, resolves on next focus (same accepted gap as FT-12's edge case #5).
+4. Duplicate place names within a group — allowed; name is a label, not an identity key.
+5. Zero groups — "Places" entry point hidden entirely (see "Entry point" above).
 
-**Out of scope:** foreground/background detection (FT-16/FT-18), push on entry/exit (FT-17); zone overlay on `FamilyMap.tsx`; any change to FT-13's schema/RLS; admin/co-owner role or ownership transfer (same gap class as FT-11); autocomplete-as-you-type address search (split to FT-14b — this ticket's address search is exact-match only).
+**Out of scope:** foreground/background detection (FT-16/FT-18), push on entry/exit (FT-17); any change to FT-13's schema/RLS; admin/co-owner role or ownership transfer (same gap class as FT-11); named-place/autocomplete search (FT-14b).
 
-**On-device verification:** Owner (A) opens group detail → Manage Zones → creates a zone → confirm it appears and edits persist after navigating away/back. Non-owner member (B), same group: sees A's zone with no Edit/Delete, can create and edit/delete their own. A can edit/delete B's zone (owner override). Delete a zone from A → disappears from both lists on next focus. B leaves the group → A's list unaffected, B can no longer reach that group's zones route.
+**On-device verification:** per piece per the build order above, then end-to-end once all five land: from the main map with an active group, tap Places → add a place by address → confirm it appears as a pin on the map with default radius. Add a second place via "Select on Map," confirming the pin/circle track live while panning. Tap the first place's map pin → Callout → Edit → reposition via the inline picker, change radius, save → confirm both list and map reflect the change. Delete a place from the edit screen → confirm it's gone from both list and map. Switch active group (if testing with 2+ groups) → confirm Places list and map pins scope to the newly active group only. Confirm the "Places" button disappears entirely for an account with zero groups.
 
-### FT-14b detail — Autocomplete upgrade for geofence address search
+### FT-14b detail — Autocomplete/named-place upgrade for Places address search
 
-**Type:** Feature (upgrades FT-14's exact-match address search to as-you-type suggestions)
+**Type:** Feature (upgrades FT-14's exact-match address search to as-you-type, name-aware suggestions)
 
-**Why:** FT-14 ships exact-address search via `expo-location`'s on-device `geocodeAsync` — type a full address, get one result, no suggestions. FT-14b upgrades that to a narrowing dropdown of candidates as the user types, which needs an external places-autocomplete provider (on-device geocoding has no typeahead/suggestion capability). Split out during FT-14 design so the provider/key decision doesn't block FT-14, and because FT-14's exact-match search already covers the core need.
+**Why:** FT-14 ships exact-address search via `expo-location`'s on-device `geocodeAsync` — resolves a typed postal address ("123 Main St") but not a business/place name ("Spaghetti Factory"), and gives one result with no narrowing suggestions as you type. FT-14b upgrades `AddressSearchModal` (shared by FT-14's Add Place and Edit flows) to a real places-autocomplete provider that handles both. Split out during FT-14 design so the provider/key decision doesn't block it, confirmed still deferred (PO, 2026-08-21) after the FT-14 redesign — v1 ships address-only.
 
-**OPEN — needs a locked PO decision before implementation:** which provider? Google Places Autocomplete (widest coverage, billed API beyond a free tier, needs a Google Cloud project + key) vs. Mapbox Search API (similar shape, separate account/key). Both are plain HTTP APIs — same client integration on iOS/Android. (Apple's `MKLocalSearchCompleter` was considered and rejected: iOS-only, no Android path, moot anyway since Android is currently out of scope for the whole roadmap — see "Other flags.") Not choosing here since it's a billing/account decision, not an architectural one.
+**OPEN — needs a locked PO decision before implementation:** which provider? Google Places Autocomplete (widest coverage, billed API beyond a free tier — confirmed viable at family/small-group scale: autocomplete keystrokes are free at any volume when a session is properly closed by a Place Details call, and Essentials-tier Place Details gets 10,000 free calls/month, comfortably enough here) vs. Mapbox Search API (similar shape, separate account/key). Both are plain HTTP APIs — same client integration on iOS/Android. (Apple's `MKLocalSearchCompleter` was considered and rejected: iOS-only, no Android path, moot anyway since Android is out of scope for the whole roadmap — see "Other flags.") Not choosing here since it's a billing/account decision, not an architectural one.
 
-**Client scope:** one new component in `features/geofencing/` — an address text input above/alongside FT-14's map, wired to a new `useAddressAutocomplete(query)` hook: debounced (don't fire per keystroke) and **AbortController-cancelled** on each new query so a slow stale response can't overwrite a newer result set. Renders a dropdown of narrowing suggestions below the input; selecting one resolves to a place (a second "place details" call for most providers, since autocomplete predictions return text + an opaque id, not raw coordinates) and drops/moves FT-14's marker to that point — the rest of the form (name, radius slider, save) is unchanged and shared with FT-14.
+**Client scope:** upgrades `AddressSearchModal` (FT-14) in place — wire it to a new `useAddressAutocomplete(query)` hook: debounced (don't fire per keystroke) and **AbortController-cancelled** on each new query so a slow stale response can't overwrite a newer result set. Renders a dropdown of narrowing suggestions below the input; selecting one resolves to a place (a second "place details" call for most providers, since autocomplete predictions return text + an opaque id, not raw coordinates) and returns it to whichever screen opened the modal (`AddPlaceScreen` or `EditPlaceScreen`), same return path FT-14 already uses for the exact-match version.
 
 **New surface:** provider API key (new `.env` entry, follow this repo's existing `.env.example` pattern); new failure states (no network, zero results, rate-limited/quota-exceeded, provider timeout); if Google Places, session-token handling so the autocomplete + details calls bill as one session instead of two.
 
-**Out of scope:** the provider account/billing setup itself (a one-time manual step, not a code task); any change to FT-13's schema (still just lat/lng/radius_m) or FT-14's map long-press path, which remains available alongside this.
+**Out of scope:** the provider account/billing setup itself (a one-time manual step, not a code task); any change to FT-13's schema (still just lat/lng/radius_m) or FT-14's `MapLocationPicker` path, which remains available alongside this.
 
 ---
 
@@ -796,3 +815,4 @@ Building against **Option A (GPS-derived, no new native dependency)** — do not
 - **FT-28's 15-minute staleness threshold is tuned for the current foreground-only reality** (no background location writer exists until FT-18, which is scoped to geofencing only, not general broadcast). If background location tracking is ever broadened beyond FT-18's narrow use case, this threshold should be revisited — a background-tracked app would make "stale" a much rarer, more meaningful signal than it is today.
 - **Flaky loading-state tests**: `useSendInvite.test.ts` (FT-9) and `useLeaveGroup.test.ts` (FT-11) both race a real `setTimeout(..., 100)` against `waitFor` to catch a hook's mid-flight loading state — occasionally times out under CPU load in full-suite runs. Not a correctness bug, just test timing. Worth a cleanup pass (deterministic manually-controlled promise instead of a real timer) if it starts causing CI noise. Found during FT-11 verification (2026-08-19).
 - **`GroupSwitcher`'s pill-row styling should become a proper select/dropdown** once a user is likely to belong to more than a handful of groups — a horizontal scrolling pill row (FT-12) doesn't scale well past a few groups. Flagged during FT-12 on-device QA (2026-08-20), not blocking.
+- **"Leave Group" placement on `GroupDetailScreen`** should move to the bottom of the screen, below other actions — standard "dangerous settings sink to the bottom" convention (mirrors iOS Settings apps). Currently sits wherever FT-11 originally placed it. Flagged during FT-14 on-device QA (2026-08-21), pure UI polish, not blocking.
