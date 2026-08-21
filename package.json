@@ -31,6 +31,7 @@
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
+    "ios:device": "expo run:ios --device",
     "web": "expo start --web",
     "test": "jest --watchAll",
     "test:ci": "jest --ci"
