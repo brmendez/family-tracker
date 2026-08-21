@@ -151,7 +151,7 @@ movement, while catching a closed app meaningfully faster than an hour.
 | FT-10 | Accept/decline invite | FT-9 | ✅ Done |
 | FT-11 | Leave group (auto-delete on last member per #2) | FT-7 | ✅ Done |
 | FT-12 | Group-scoped location visibility — rewrites `location_history` RLS to require shared group membership; map uses per-group switcher per #4 | FT-6, FT-7 | ✅ Done |
-| FT-New | Password reset flow (in scope starting here per #8) | FT-2 | ⬜ |
+| FT-24 | Password reset flow (in scope starting here per #8). **Note:** lives in this table for historical reasons (was originally flagged here as `FT-New`) but is a parallel-track auth ticket, not Groups & Membership — depends only on FT-2, unaffected by and doesn't affect v2/v3/v4/v5/v6 sequencing. | FT-2 (auth only — independent of FT-7–12) | ⬜ |
 
 ### FT-9 detail — Invite to group (email-match-at-signup)
 
@@ -632,6 +632,61 @@ the solo group, not back to "Family."
 | FT-16 | Foreground geofence detection + in-app alert | FT-14, FT-6 | ⬜ |
 | FT-17 | Push notification on entry/exit (server-triggered webhook) | FT-15, FT-16 | ⬜ |
 | **FT-18** | **Background geofence detection.** Requires the "Always" location permission and background task registration — a bigger native/permissions lift than the dev build requirement itself, which actually started at FT-4. | FT-16, FT-17 | ⬜ |
+
+### FT-13 detail — Schema: `geofences` + `geofence_events`, group-scoped
+
+**Type:** Chore (schema/infra — no user-facing surface; pure Postgres foundation for FT-14/FT-16/FT-18)
+
+**Why:** v3 needs a group-scoped concept of "zones" (FT-14 builds create/manage UI on top) and an append-only record of entry/exit detections (FT-16/18 write to it, FT-17 reacts to it). Neither exists yet. FT-13 is schema-only, same precedent as FT-7 (`groups`/`group_members`): land tables, constraints, and RLS now so every consuming ticket builds on a stable foundation.
+
+**Schema — `geofences`:**
+- `id uuid primary key default gen_random_uuid()`
+- `group_id uuid not null references public.groups(id) on delete cascade`
+- `name text not null check (char_length(btrim(name)) > 0)`
+- `latitude float8 not null`, `longitude float8 not null` — plain columns (not PostGIS), matching `location_history`'s convention and `expo-location`'s `startGeofencingAsync` region shape (`{ latitude, longitude, radius }`) with zero conversion.
+- `radius_m float8 not null check (radius_m > 0)` — meters, matching the native API's unit. No minimum-radius constraint at the DB level: the ~100–150m iOS region-monitoring accuracy floor is a detection-reliability/UX concern for FT-14's form, not a data-integrity concern.
+- `created_by uuid references public.profiles(id) on delete set null`
+- `created_at timestamptz not null default now()`
+
+Index: `geofences_group_id_idx on (group_id)`.
+
+**Schema — `geofence_events`:**
+- `id uuid primary key default gen_random_uuid()`
+- `geofence_id uuid not null references public.geofences(id) on delete cascade`
+- `user_id uuid not null references public.profiles(id) on delete cascade`
+- `event_type text not null check (event_type in ('enter', 'exit'))`
+- `occurred_at timestamptz not null` — device-reported detection time, distinct from `created_at` (server insert time), same split as `location_history`.
+- `created_at timestamptz not null default now()`
+
+Indexes: `(geofence_id, occurred_at desc)`, `(user_id, occurred_at desc)`.
+
+No denormalized `group_id` column on `geofence_events` — membership is derived by joining to `geofences.group_id`, same pattern as `location_history` deriving visibility without its own `group_id` (FT-12).
+
+**RLS / grants** (new migration `0009_geofences.sql`): `geofences` has a real `group_id` column, so FT-7's `is_group_member`/`is_group_owner` apply directly — no new helper needed.
+- `geofences`: `select`/`insert`/`delete` to `authenticated`; column-level `update (name, latitude, longitude, radius_m)`.
+  - `geofences_select_member`: `using (is_group_member(group_id))`.
+  - `geofences_insert_member`: `with check (is_group_member(group_id) and created_by = auth.uid())`.
+  - `geofences_update_creator_or_owner` / `geofences_delete_creator_or_owner`: `using (is_group_member(group_id) and (created_by = auth.uid() or is_group_owner(group_id)))` — the `is_group_member` clause is load-bearing: without it, a member who has since left the group would still satisfy `created_by = auth.uid()` and retain latent edit/delete rights on a group they can no longer see.
+- `geofence_events` (append-only, same posture as `location_history`): `select`/`insert` to `authenticated`, no update/delete grant.
+  - `geofence_events_select_group_member`: `using (exists (select 1 from public.geofences g where g.id = geofence_id and is_group_member(g.group_id)))`.
+  - `geofence_events_insert_own`: `with check (user_id = auth.uid() and exists (select 1 from public.geofences g where g.id = geofence_id and is_group_member(g.group_id)))`.
+
+**Server-side logic:** None — raw grants + RLS `with check` cover both tables, no multi-table atomicity requirement, so no SECURITY DEFINER RPC needed.
+
+**Client scope:** None. Creating/managing geofences is FT-14; writing `geofence_events` from detected enter/exit is FT-16/FT-18.
+
+**Permission model — reasoned call, needs PO confirmation before FT-14 starts:** nothing in the locked decisions covers geofence ownership; decision #1's group-identity pattern (owner-only rename/delete) doesn't map cleanly onto shared, collaborative zone content. Default built into this ticket's RLS: **any member can create** a geofence (parity with invite per #1); **only its creator or the group owner can edit/delete it** (new "self or owner" shape, mirroring `group_members_delete_self_or_owner`). Alternative: fully symmetric — any member can edit/delete any geofence, no individual ownership, matching how location visibility itself works. Switching later means an RLS migration plus rewriting FT-14's eligibility-gated UI, so this should be settled before FT-14 starts rather than revisited after.
+
+**Edge cases:**
+1. Non-member create/read/update/delete — blocked by RLS at every policy.
+2. Last member leaves → group auto-deletes (decision #2) → cascades `geofences` → cascades `geofence_events`. Two FK hops, worth an explicit test.
+3. Creator leaves the group but it persists — loses `is_group_member`, so loses select **and** edit/delete rights; the geofence itself is untouched and still editable by the owner.
+4. Creator's account deleted — `created_by` goes null; edit/delete rights then rest solely on `is_group_owner`.
+5. Rapid duplicate enter/exit events from native geofencing false triggers — no dedupe/uniqueness constraint at this layer, same accepted posture as `location_history`'s duplicate-timestamp quirk.
+
+**Out of scope:** create/edit/list UI (FT-14); foreground/background detection logic (FT-16, FT-18); push notification on entry/exit (FT-17); event dedupe/debounce; radius validation/accuracy-floor UX (FT-14's concern); any ownership-transfer mechanism (same open gap class as FT-11).
+
+**Verification (schema-only, no client to run on-device):** apply the migration locally, then confirm the RLS matrix directly against two seeded accounts sharing one group plus a third account in no shared group: (a) the third account cannot select/insert/update/delete a geofence in the shared group; (b) a non-creator member can create a geofence but cannot update/delete another member's; (c) the group owner can update/delete any geofence in their group regardless of creator; (d) an account that leaves the group loses select on geofences it created; (e) inserting a `geofence_events` row for another user's `user_id`, or for a geofence outside a shared group, is rejected; (f) deleting a group (or triggering last-member-leave auto-delete) removes its geofences and their events.
 
 ---
 
