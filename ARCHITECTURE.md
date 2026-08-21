@@ -47,6 +47,7 @@ lib/
 | 8 | v1 password reset | Out of scope for v1 (2 known users, self-serviceable via Supabase dashboard). In scope starting v2, once groups introduce users outside the household. |
 | 9 | v6 speed/duration thresholds | **Deferred** — revisit when v6 starts. |
 | 11 | Cross-group visibility | **Locked (2026-08-20):** each group's membership is its own independent authorization boundary. Sharing group B with someone still lets them see your location even after you remove them from group A — removal from one group never revokes visibility granted by another shared group. The map's per-group switcher (#4) is a display filter only, not a visibility control; it doesn't affect who can see you. |
+| 12 | Geofence permissions | **Locked (2026-08-20):** any group member can create a geofence — a non-owner member shouldn't have to ask the owner to add a zone. Only the geofence's creator, or the group owner, can edit/delete it. No admin/co-owner role. |
 
 ## Locked schema consequence (from #6 + #7 combined)
 Answer #7 means "was this person hidden from this group at 3pm last Tuesday" has to be answerable later, not just "are they hidden right now." A simple current-state flag that gets overwritten on every hide/unhide can't answer that. So **both the per-group visibility override (v4) and the global visibility flag (v4) must be event-sourced (append-only log of hide/unhide events)**, same pattern as `location_history` already uses, for the same reason. This is locked in for FT-19/FT-21 below — do not implement as a simple upsert row.
@@ -675,7 +676,7 @@ No denormalized `group_id` column on `geofence_events` — membership is derived
 
 **Client scope:** None. Creating/managing geofences is FT-14; writing `geofence_events` from detected enter/exit is FT-16/FT-18.
 
-**Permission model — reasoned call, needs PO confirmation before FT-14 starts:** nothing in the locked decisions covers geofence ownership; decision #1's group-identity pattern (owner-only rename/delete) doesn't map cleanly onto shared, collaborative zone content. Default built into this ticket's RLS: **any member can create** a geofence (parity with invite per #1); **only its creator or the group owner can edit/delete it** (new "self or owner" shape, mirroring `group_members_delete_self_or_owner`). Alternative: fully symmetric — any member can edit/delete any geofence, no individual ownership, matching how location visibility itself works. Switching later means an RLS migration plus rewriting FT-14's eligibility-gated UI, so this should be settled before FT-14 starts rather than revisited after.
+**Permission model — locked by PO (2026-08-20):** **any member can create** a geofence (parity with invite per #1 — a non-owner member shouldn't have to ask the owner to add a zone); **only its creator or the group owner can edit/delete it** (new "self or owner" shape, mirroring `group_members_delete_self_or_owner`). No admin/co-owner role — out of scope for now, not needed to satisfy this requirement.
 
 **Edge cases:**
 1. Non-member create/read/update/delete — blocked by RLS at every policy.
