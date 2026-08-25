@@ -2,10 +2,18 @@
 // Mock all the hooks and components BEFORE imports
 jest.mock('../../../lib/supabase');
 jest.mock('../../../context/groups.context');
+jest.mock('../../geofencing/hooks/useGeofences');
 jest.mock('../hooks/useForegroundLocation');
 jest.mock('../hooks/useActiveGroupMembers');
 jest.mock('../hooks/useGroupMemberLocations');
 jest.mock('../hooks/useLocationHistoryWriter');
+// useFocusEffect needs a real NavigationContainer to resolve useNavigation(),
+// which isn't present in these bare component renders — same pattern as
+// GroupsScreen.test.tsx. Stub it to just run the effect immediately.
+jest.mock('expo-router', () => ({
+  ...jest.requireActual('expo-router'),
+  useFocusEffect: (effect: () => void) => effect(),
+}));
 jest.mock('./OtherUserMarker', () => ({
   OtherUserMarker: ({ displayName }: { displayName: string; location: unknown }) => {
     const { Text } = require('react-native');
@@ -38,9 +46,17 @@ jest.mock('react-native-maps', () => {
     __esModule: true,
     default: ({ children, initialRegion }: { children: unknown; initialRegion: unknown }) =>
       initialRegion ? <View testID="map-view">{children}</View> : null,
-    Marker: ({ title }: { title: string }) => {
-      const { Text } = require('react-native');
-      return <Text testID={`marker-${title}`}>{title}</Text>;
+    Marker: ({ title, children }: { title?: string; children?: unknown }) => {
+      const { Text, View } = require('react-native');
+      return title ? (
+        <Text testID={`marker-${title}`}>{title}</Text>
+      ) : (
+        <View>{children}</View>
+      );
+    },
+    Callout: ({ children }: { children: unknown }) => {
+      const { View } = require('react-native');
+      return <View testID="callout">{children}</View>;
     },
   };
 });
@@ -55,6 +71,7 @@ import {
 
 import { FamilyMap } from './FamilyMap';
 import { useGroupsContext } from '../../../context/groups.context';
+import { useGeofences } from '../../geofencing/hooks/useGeofences';
 import { useForegroundLocation } from '../hooks/useForegroundLocation';
 import { useActiveGroupMembers } from '../hooks/useActiveGroupMembers';
 import { useGroupMemberLocations } from '../hooks/useGroupMemberLocations';
@@ -62,6 +79,7 @@ import { useGroupMemberLocations } from '../hooks/useGroupMemberLocations';
 const mockedUseGroupsContext = useGroupsContext as jest.MockedFunction<
   typeof useGroupsContext
 >;
+const mockedUseGeofences = useGeofences as jest.MockedFunction<typeof useGeofences>;
 const mockedUseForegroundLocation = useForegroundLocation as jest.MockedFunction<
   typeof useForegroundLocation
 >;
@@ -84,6 +102,12 @@ const mockCoords = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockedUseGeofences.mockReturnValue({
+    geofences: [],
+    loading: false,
+    errorMessage: null,
+    refetch: jest.fn(),
+  });
 });
 
 describe('FamilyMap', () => {
