@@ -628,8 +628,8 @@ the solo group, not back to "Family."
 | Ticket | Description | Depends on | Status |
 |---|---|---|---|
 | FT-13 | Schema: `geofences` + `geofence_events`, group-scoped | FT-7 | ✅ Done |
-| FT-14 | "Places" — create/manage geofences from the main map (foreground) | FT-13, FT-12 | ⬜ |
-| FT-14b | Autocomplete/named-place upgrade for Places address search (v1 ships exact-address geocoding only) | FT-14 | ⬜ |
+| FT-14 | "Zones" — create/manage geofences from the main map (foreground) | FT-13, FT-12 | ✅ Done |
+| FT-14b | Autocomplete/named-place upgrade for Zones address search (v1 ships exact-address geocoding only) | FT-14 | ⬜ |
 | FT-15 | Push notification infrastructure (shared primitive — reused later by v6) | FT-2 | ⬜ |
 | FT-16 | Foreground geofence detection + in-app alert | FT-14, FT-6 | ⬜ |
 | FT-17 | Push notification on entry/exit (server-triggered webhook) | FT-15, FT-16 | ⬜ |
@@ -692,7 +692,7 @@ No denormalized `group_id` column on `geofence_events` — membership is derived
 
 ---
 
-### FT-14 detail — "Places": create/manage geofences from the main map (foreground)
+### FT-14 detail — "Zones": create/manage geofences from the main map (foreground)
 
 **Type:** Feature
 
