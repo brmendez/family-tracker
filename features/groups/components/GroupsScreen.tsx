@@ -12,6 +12,8 @@ import {
 } from 'react-native';
 
 import { useGroupsContext } from '../../../context/groups.context';
+import { useNotificationsContext } from '../../../context/notifications.context';
+import { NotificationPermissionBanner } from '../../notifications/components/NotificationPermissionBanner';
 import { useGroups } from '../hooks/useGroups';
 import { usePendingInvites } from '../hooks/usePendingInvites';
 import { CreateGroupForm } from './CreateGroupForm';
@@ -54,6 +56,12 @@ import { PendingInvitesSection } from './PendingInvitesSection';
  * refetchGroups() — a third independent hook instance (the map's
  * activeGroupId source) that would otherwise only learn about a new
  * group on the next full app launch.
+ *
+ * FT-15: renders NotificationPermissionBanner when push permission is
+ * denied — the "ask again" surface, since there's no dedicated Settings
+ * screen yet. Reads pushPermissionStatus from NotificationsContext
+ * (app/(app)/_layout.tsx) rather than calling usePushRegistration()
+ * directly, since that hook's subscriptions must only run once.
  */
 export const GroupsScreen = () => {
   const {
@@ -65,6 +73,8 @@ export const GroupsScreen = () => {
     createErrorMessage,
     refetch,
   } = useGroups();
+
+  const { pushPermissionStatus } = useNotificationsContext();
 
   const {
     invites,
@@ -126,6 +136,8 @@ export const GroupsScreen = () => {
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
         >
+          {pushPermissionStatus === 'denied' ? <NotificationPermissionBanner /> : null}
+
           <PendingInvitesSection
             invites={invites}
             respond={handleRespond}

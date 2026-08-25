@@ -3,6 +3,7 @@ import { Stack, useRouter } from 'expo-router';
 import { Pressable, StyleSheet, Text } from 'react-native';
 
 import { GroupsProvider } from '../../context/groups.context';
+import { NotificationsProvider } from '../../context/notifications.context';
 
 /**
  * FT-8: route group for the signed-in app, mirroring (auth)'s layout
@@ -20,6 +21,12 @@ import { GroupsProvider } from '../../context/groups.context';
  * (native-stack's presentation option lives on the Screen entry in the
  * navigator that performs the push, not in the nested layout itself) so
  * it overlays the map instead of replacing it.
+ *
+ * FT-15: wraps in NotificationsProvider, which invokes
+ * usePushRegistration() once so permission is requested and the
+ * device's push token registered on first authenticated load. Screens
+ * that need pushPermissionStatus (currently GroupsScreen) read it from
+ * that context rather than calling the hook again.
  */
 const AppLayout = () => {
   const router = useRouter();
@@ -31,22 +38,24 @@ const AppLayout = () => {
   );
 
   return (
-    <GroupsProvider>
-      <Stack screenOptions={{ headerShown: false }}>
-        <Stack.Screen
-          name="index"
-          options={{
-            headerShown: true,
-            headerRight: renderGroupsButton,
-          }}
-        />
-        <Stack.Screen name="groups" />
-        <Stack.Screen
-          name="places"
-          options={{ presentation: 'modal', headerShown: false }}
-        />
-      </Stack>
-    </GroupsProvider>
+    <NotificationsProvider>
+      <GroupsProvider>
+        <Stack screenOptions={{ headerShown: false }}>
+          <Stack.Screen
+            name="index"
+            options={{
+              headerShown: true,
+              headerRight: renderGroupsButton,
+            }}
+          />
+          <Stack.Screen name="groups" />
+          <Stack.Screen
+            name="places"
+            options={{ presentation: 'modal', headerShown: false }}
+          />
+        </Stack>
+      </GroupsProvider>
+    </NotificationsProvider>
   );
 };
 
