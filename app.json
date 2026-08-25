@@ -10,7 +10,8 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.anonymous.family-tracker",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "Family Tracker uses your location to show it to your family group on the map."
+        "NSLocationWhenInUseUsageDescription": "Family Tracker uses your location to show it to your family group on the map.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -29,6 +30,13 @@
       "expo-router",
       "expo-status-bar",
       "expo-notifications"
-    ]
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "3a1bd701-6f7c-4f0e-813f-194e41db962d"
+      }
+    },
+    "owner": "brmendez"
   }
 }
