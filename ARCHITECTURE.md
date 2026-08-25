@@ -816,11 +816,19 @@ billing decision — not flagging as OPEN.
 Index: `push_tokens_user_id_idx on (user_id)` (server-side send lookup).
 
 **RLS / grants:** RLS enabled, one `push_tokens_own_row` policy,
-`using/with check (auth.uid() = user_id)`, granted `insert, update,
-delete` to `authenticated` — no `select` grant, nothing in this ticket
-reads a user's own tokens back client-side. The server-side send function
-below runs under the service-role key and bypasses RLS entirely, same
-posture as any Edge Function needing cross-user reads.
+`using/with check (auth.uid() = user_id)`, granted `select, insert,
+update, delete` to `authenticated`. `select` is granted even though
+nothing client-side reads a token back deliberately: Postgres requires
+SELECT privilege to satisfy the RETURNING clause `upsert()` uses
+internally to report what was written, regardless of whether the caller
+asks for the row back — found during on-device QA (`upsert()` was failing
+with a bare "permission denied" until `select` was added). RLS still
+scopes it to the caller's own row, so this doesn't expose other users'
+tokens. The server-side send function below runs under the service-role
+key; `service_role` also needed its own explicit `select, insert, update,
+delete` grant (found during on-device QA) — its RLS-bypass privilege
+(BYPASSRLS) only skips row-level security policies, not the separate
+table-grant system, so it doesn't get implicit access either.
 
 **Server-side logic — shared send function, not a public endpoint:**
 - `supabase/functions/_shared/sendPush.ts` — exports

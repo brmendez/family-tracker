@@ -2,6 +2,7 @@
 import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import { useEffect, useState } from 'react';
+import { AppState } from 'react-native';
 
 import { useAuth } from '../../../context/auth.context';
 import { supabase } from '../../../lib/supabase';
@@ -66,6 +67,11 @@ const registerToken = async (userId: string): Promise<void> => {
  * gate — the app is fully usable with notifications denied;
  * NotificationPermissionBanner is the only UI this status drives.
  *
+ * Also re-checks permission whenever the app returns to the foreground
+ * (AppState 'active'), not just on mount: returning from Settings after
+ * toggling permission resumes the existing app session rather than
+ * relaunching it, so a mount-only check would never notice the change.
+ *
  * Also subscribes to Expo's push-token-change listener: the listener
  * itself only reports the raw native device token, so on fire this
  * re-fetches the Expo push token and re-upserts it, covering rare OS
@@ -102,8 +108,15 @@ export const usePushRegistration = (): UsePushRegistrationResult => {
 
     requestAndRegister();
 
+    const appStateSubscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        requestAndRegister();
+      }
+    });
+
     return () => {
       isCancelled = true;
+      appStateSubscription.remove();
     };
   }, [userId]);
 
@@ -112,8 +125,27 @@ export const usePushRegistration = (): UsePushRegistrationResult => {
       return;
     }
 
+    // Re-fetching the Expo push token here can itself trigger another
+    // native device-token event on some devices, which would otherwise
+    // retrigger this listener as soon as the previous call finishes —
+    // a self-sustaining loop. A minimum interval between calls (not just
+    // an in-flight guard) is what actually breaks that cycle; a real
+    // token rotation is rare enough that a short cooldown doesn't lose it.
+    let isRegistering = false;
+    let lastHandledAt = 0;
+    const MIN_INTERVAL_MS = 5000;
+
     const subscription = Notifications.addPushTokenListener(() => {
-      registerToken(userId);
+      const now = Date.now();
+      if (isRegistering || now - lastHandledAt < MIN_INTERVAL_MS) {
+        return;
+      }
+
+      isRegistering = true;
+      lastHandledAt = now;
+      registerToken(userId).finally(() => {
+        isRegistering = false;
+      });
     });
 
     return () => {

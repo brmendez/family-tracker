@@ -2,6 +2,7 @@
 import Constants from 'expo-constants';
 import * as Notifications from 'expo-notifications';
 import { renderHook, waitFor } from '@testing-library/react-native';
+import { AppState } from 'react-native';
 
 import { useAuth } from '../../../context/auth.context';
 import { supabase } from '../../../lib/supabase';
@@ -225,6 +226,24 @@ describe('usePushRegistration', () => {
     await flush();
 
     expect(mockedNotifications.addPushTokenListener).toHaveBeenCalled();
+  });
+
+  it('re-checks permission when app returns to foreground', async () => {
+    const addEventListenerSpy = jest.spyOn(AppState, 'addEventListener');
+
+    await renderHook(() => usePushRegistration());
+    await flush();
+
+    expect(mockedNotifications.getPermissionsAsync).toHaveBeenCalledTimes(1);
+
+    const changeHandler = addEventListenerSpy.mock.calls.find(
+      ([event]) => event === 'change',
+    )?.[1] as (state: string) => void;
+
+    changeHandler('active');
+    await flush();
+
+    expect(mockedNotifications.getPermissionsAsync).toHaveBeenCalledTimes(2);
   });
 
   it('does not initialize when no userId', async () => {

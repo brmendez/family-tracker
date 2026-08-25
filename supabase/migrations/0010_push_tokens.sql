@@ -1,8 +1,12 @@
 -- supabase/migrations/0010_push_tokens.sql
 -- FT-15: push_tokens — device token storage for the shared push
--- notification primitive. No select grant: nothing client-side reads a
--- user's own tokens back, and the server-side send function (sendPush.ts)
--- runs under the service-role key, bypassing RLS entirely.
+-- notification primitive. select is granted even though nothing
+-- client-side reads a token back deliberately: Postgres requires SELECT
+-- privilege to satisfy the RETURNING clause upsert()/insert() use
+-- internally to report what was written, regardless of whether the
+-- caller asks for the row back. RLS still scopes it to the caller's own
+-- row. The server-side send function (sendPush.ts) runs under the
+-- service-role key, bypassing RLS entirely.
 
 create table if not exists public.push_tokens (
   id uuid primary key default gen_random_uuid(),
@@ -23,9 +27,12 @@ create index if not exists push_tokens_user_id_idx
 alter table public.push_tokens enable row level security;
 
 -- With "Automatically expose new tables" disabled at the project level,
--- Postgres does not grant table-level privileges to `authenticated` by
--- default. RLS policies below are meaningless without these grants.
-grant insert, update, delete on public.push_tokens to authenticated;
+-- Postgres does not grant table-level privileges to any role by default —
+-- including service_role. BYPASSRLS (which service_role has) only skips
+-- row-level security policies, not the separate table-grant system, so
+-- it still needs its own explicit grant here, same as authenticated.
+grant select, insert, update, delete on public.push_tokens to authenticated;
+grant select, insert, update, delete on public.push_tokens to service_role;
 
 drop policy if exists "push_tokens_own_row" on public.push_tokens;
 create policy "push_tokens_own_row"
