@@ -5,6 +5,7 @@ jest.mock('../../../context/auth.context');
 jest.mock('../hooks/useGroups');
 jest.mock('../hooks/usePendingInvites');
 jest.mock('../../../context/groups.context');
+jest.mock('../../../context/notifications.context');
 // FT-11: useFocusEffect needs a real NavigationContainer to resolve
 // useNavigation(), which isn't present in these bare component renders.
 // Stub it to just run the effect immediately, like a plain useEffect —
@@ -17,6 +18,7 @@ jest.mock('expo-router', () => ({
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
 
 import { useGroupsContext } from '../../../context/groups.context';
+import { useNotificationsContext } from '../../../context/notifications.context';
 import { useGroups } from '../hooks/useGroups';
 import { usePendingInvites } from '../hooks/usePendingInvites';
 import { GroupsScreen } from './GroupsScreen';
@@ -26,6 +28,9 @@ import type { PendingInvite } from '../hooks/usePendingInvites';
 const mockUseGroups = useGroups as jest.MockedFunction<typeof useGroups>;
 const mockUsePendingInvites = usePendingInvites as jest.MockedFunction<typeof usePendingInvites>;
 const mockUseGroupsContext = useGroupsContext as jest.MockedFunction<typeof useGroupsContext>;
+const mockUseNotificationsContext = useNotificationsContext as jest.MockedFunction<
+  typeof useNotificationsContext
+>;
 
 const createMockGroup = (
   id: string = 'group-1',
@@ -94,6 +99,12 @@ describe('GroupsScreen', () => {
       loading: false,
       errorMessage: null,
       refetchGroups: mockRefetchGroups,
+    });
+
+    // Default useNotificationsContext mock (FT-15) — granted, so
+    // NotificationPermissionBanner doesn't render unless a test overrides it.
+    mockUseNotificationsContext.mockReturnValue({
+      pushPermissionStatus: 'granted',
     });
   });
 
@@ -617,6 +628,69 @@ describe('GroupsScreen', () => {
       await render(<GroupsScreen />);
 
       expect(mockRefetch).toHaveBeenCalled();
+    });
+  });
+
+  describe('FT-15: notification permission banner', () => {
+    it('renders NotificationPermissionBanner when pushPermissionStatus is denied', async () => {
+      mockUseNotificationsContext.mockReturnValue({
+        pushPermissionStatus: 'denied',
+      });
+
+      mockUseGroups.mockReturnValue({
+        groups: [],
+        loading: false,
+        errorMessage: null,
+        createGroup: mockCreateGroup,
+        creating: false,
+        createErrorMessage: null,
+        refetch: mockRefetch,
+      });
+
+      await render(<GroupsScreen />);
+
+      expect(screen.getByText('Notifications are off')).toBeTruthy();
+      expect(screen.getByText(/Turn on notifications in Settings/)).toBeTruthy();
+    });
+
+    it('does not render NotificationPermissionBanner when pushPermissionStatus is granted', async () => {
+      mockUseNotificationsContext.mockReturnValue({
+        pushPermissionStatus: 'granted',
+      });
+
+      mockUseGroups.mockReturnValue({
+        groups: [],
+        loading: false,
+        errorMessage: null,
+        createGroup: mockCreateGroup,
+        creating: false,
+        createErrorMessage: null,
+        refetch: mockRefetch,
+      });
+
+      await render(<GroupsScreen />);
+
+      expect(screen.queryByText('Notifications are off')).toBeNull();
+    });
+
+    it('does not render NotificationPermissionBanner when pushPermissionStatus is undetermined', async () => {
+      mockUseNotificationsContext.mockReturnValue({
+        pushPermissionStatus: 'undetermined',
+      });
+
+      mockUseGroups.mockReturnValue({
+        groups: [],
+        loading: false,
+        errorMessage: null,
+        createGroup: mockCreateGroup,
+        creating: false,
+        createErrorMessage: null,
+        refetch: mockRefetch,
+      });
+
+      await render(<GroupsScreen />);
+
+      expect(screen.queryByText('Notifications are off')).toBeNull();
     });
   });
 });
