@@ -779,6 +779,142 @@ Radius bounds unchanged from the original decision: **250 ft to 10,600 ft, defau
 
 ---
 
+### FT-15 detail — Push notification infrastructure (shared primitive)
+
+**Type:** Chore (infra — no user-facing feature surface of its own; FT-16's
+foreground alert stays in-app only, FT-17 is the first consumer that
+actually triggers a push)
+
+**Why:** FT-17 (entry/exit push) and FT-27 (v6 dangerous-activity push)
+both need to "send a push notification to specific user(s)." Building that
+inside FT-17 would hardcode it to geofencing and force FT-27 to duplicate
+or refactor it later. FT-15 lands the generic pieces once: device token
+storage, permission/registration on the client, and a shared server-side
+send function that takes a recipient list + content, with zero
+geofencing/activity awareness. FT-16 (foreground detection) doesn't depend
+on this ticket — an in-app alert isn't a system push.
+
+**Provider:** `expo-notifications` + Expo Push Service — the default for
+an Expo-managed app already past the dev-build line (remote push isn't
+supported in Expo Go from SDK 49+ anyway, so this doesn't cross a *new*
+Expo Go/dev-build boundary, it's already on the dev-build side). Free, no
+billing decision — not flagging as OPEN.
+
+**Schema — `push_tokens`** (new migration `0010_push_tokens.sql`):
+- `id uuid primary key default gen_random_uuid()`
+- `user_id uuid not null references public.profiles(id) on delete cascade`
+- `expo_push_token text not null unique` — unique on the token itself, not
+  `(user_id, token)`: a token belongs to one device installation, and the
+  same physical device can later be signed into a different account
+  (shared household device). Upsert-on-conflict-by-token reassigns
+  `user_id` automatically instead of accumulating stale rows for the old
+  account.
+- `updated_at timestamptz not null default now()` — bumped on every upsert
+  (fresh grant, token refresh, or device reassignment).
+- `created_at timestamptz not null default now()`
+
+Index: `push_tokens_user_id_idx on (user_id)` (server-side send lookup).
+
+**RLS / grants:** RLS enabled, one `push_tokens_own_row` policy,
+`using/with check (auth.uid() = user_id)`, granted `insert, update,
+delete` to `authenticated` — no `select` grant, nothing in this ticket
+reads a user's own tokens back client-side. The server-side send function
+below runs under the service-role key and bypasses RLS entirely, same
+posture as any Edge Function needing cross-user reads.
+
+**Server-side logic — shared send function, not a public endpoint:**
+- `supabase/functions/_shared/sendPush.ts` — exports
+  `sendPushNotification({ userIds, title, body, data })`. Looks up
+  `push_tokens` for `userIds` (service-role client), batches to Expo's
+  push API (`https://exp.host/--/api/v2/push/send`), and on an Expo
+  `DeviceNotRegistered` receipt error, deletes that token row. Generic on
+  purpose: no `geofence`/`activity` fields, just `title`/`body`/an opaque
+  `data` payload the caller shapes.
+- Deliberately a **shared importable module**, not its own deployed Edge
+  Function reachable over HTTP: FT-17's and FT-27's trigger functions run
+  in the same Supabase Edge Functions project and can import it directly,
+  avoiding an extra network hop and its own auth surface for something
+  never called from the client.
+- No Edge Function is deployed by this ticket — nothing triggers it yet.
+  Deployment happens with the first real caller (FT-17).
+
+**Client scope** (`features/notifications/`, new feature folder — first
+ticket to need it):
+- `features/notifications/hooks/usePushRegistration.ts` — requests
+  notification permission (mirrors FT-3's request/granted/denied shape),
+  on grant calls `getExpoPushTokenAsync` and upserts `{ user_id,
+  expo_push_token }` onto `push_tokens` (`onConflict: 'expo_push_token'`),
+  and subscribes to Expo's push-token-change listener to re-upsert if the
+  OS rotates the token. Returns `{ status: 'granted' | 'denied' |
+  'undetermined' }` for the denied-state UI below.
+- Invoked once from `app/(app)/_layout.tsx` (additive, alongside the
+  existing `GroupsProvider` wrap) — requests permission automatically on
+  first authenticated load, no dedicated onboarding screen (unlike FT-3's
+  location flow): notifications aren't required for core app function, so
+  a blocking permission screen isn't warranted.
+- `app/_layout.tsx` (root layout, touched additively) — module-level
+  `Notifications.setNotificationHandler(...)` call so a push shown while
+  foregrounded actually displays (Expo's default suppresses it). Config
+  only, not tied to auth state.
+- `features/notifications/hooks/useNotificationResponse.ts` — subscribes
+  to `addNotificationResponseReceivedListener`, returns the tapped
+  notification's `data` payload. FT-15 calls nothing with it (no consumer
+  exists yet); this just exposes the subscription so FT-17/FT-27 can route
+  on `data.type` without each reimplementing the listener.
+- `NotificationPermissionBanner` — small additive row on
+  `GroupsScreen.tsx` (existing home screen), rendered only when
+  `usePushRegistration()` reports `denied`; tapping opens
+  `Linking.openSettings()`. This is the "ask again" surface per the
+  permissions rule — there's no dedicated Settings screen in this app yet,
+  so it lives on the existing home screen rather than spawning a new one.
+- `app.json` — add the `expo-notifications` config plugin.
+
+**Permissions:** Notifications permission, introduced by this ticket.
+Denied state: `NotificationPermissionBanner` on `GroupsScreen`, tap → OS
+Settings. No blocking flow — the app is fully usable with notifications
+denied, unlike location.
+
+**Edge cases:**
+1. Same device, different account signs in later — token upsert
+   reassigns `user_id` by conflict on `expo_push_token`, no stale
+   recipient row left behind.
+2. Permission denied then later granted via Settings — no in-app
+   re-request needed; iOS relaunches the app on return from Settings,
+   `usePushRegistration`'s effect re-runs and registers normally.
+3. Uninstall/reinstall — old token naturally stops resolving (Expo returns
+   `DeviceNotRegistered` on next send), `sendPushNotification` prunes it
+   lazily rather than needing an uninstall hook.
+4. User signs out — token row is left in place (not deleted): it gets
+   reassigned if a different account signs in on that device, and costs
+   nothing if the same account signs back in.
+5. Two devices, one account (e.g. phone + a second household iPad) —
+   supported naturally, one row per device, `sendPushNotification` fans
+   out to every token for a `user_id`.
+
+**Out of scope:** any actual trigger/recipient logic (FT-17, FT-27
+entirely — this ticket sends nothing on its own); notification tap →
+navigation routing (consumer's job, per notification type); Android (out
+of scope for the whole roadmap); notification categories/actions;
+badge-count management; any UI beyond the one denied-state banner.
+
+**New surface:** requires an APNs key uploaded to the EAS project (Apple
+Developer Portal → `eas credentials`) before a real push can be delivered
+— one-time account setup, not a code task, same category as FT-14b's
+provider key.
+
+**On-device verification:** Grant notification permission on first
+authenticated load; confirm a row appears in `push_tokens` for that user
+(Supabase dashboard). Deny permission on a fresh install instead; confirm
+`NotificationPermissionBanner` appears on the Groups screen, and tapping
+it opens the iOS Settings app to this app's page. For the send path itself
+(no consumer wired up yet), run `sendPushNotification` from a throwaway
+local script (service-role key, not part of the app/repo) targeting your
+own `user_id`; confirm the push is received both foregrounded (visible
+banner, per the handler config) and backgrounded (system notification),
+and that tapping it doesn't crash.
+
+---
+
 ## V4 — Per-Group Visibility Controls *(blocked by v2)*
 
 | Ticket | Description | Depends on | Status |
