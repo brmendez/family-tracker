@@ -630,7 +630,7 @@ the solo group, not back to "Family."
 | FT-13 | Schema: `geofences` + `geofence_events`, group-scoped | FT-7 | ✅ Done |
 | FT-14 | "Zones" — create/manage geofences from the main map (foreground) | FT-13, FT-12 | ✅ Done |
 | FT-14b | Autocomplete/named-place upgrade for Zones address search (v1 ships exact-address geocoding only) | FT-14 | ⬜ |
-| FT-15 | Push notification infrastructure (shared primitive — reused later by v6) | FT-2 | ⬜ |
+| FT-15 | Push notification infrastructure (shared primitive — reused later by v6) | FT-2 | ✅ Done |
 | FT-16 | Foreground geofence detection + in-app alert | FT-14, FT-6 | ⬜ |
 | FT-17 | Push notification on entry/exit (server-triggered webhook) | FT-15, FT-16 | ⬜ |
 | **FT-18** | **Background geofence detection.** Requires the "Always" location permission and background task registration — a bigger native/permissions lift than the dev build requirement itself, which actually started at FT-4. | FT-16, FT-17 | ⬜ |
