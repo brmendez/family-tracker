@@ -2,6 +2,7 @@
 // Mock all the hooks and components BEFORE imports
 jest.mock('../../../lib/supabase');
 jest.mock('../../../context/groups.context');
+jest.mock('../../../context/notifications.context');
 jest.mock('../../geofencing/hooks/useGeofences');
 jest.mock('../hooks/useForegroundLocation');
 jest.mock('../hooks/useActiveGroupMembers');
@@ -71,6 +72,7 @@ import {
 
 import { FamilyMap } from './FamilyMap';
 import { useGroupsContext } from '../../../context/groups.context';
+import { useNotificationsContext } from '../../../context/notifications.context';
 import { useGeofences } from '../../geofencing/hooks/useGeofences';
 import { useForegroundLocation } from '../hooks/useForegroundLocation';
 import { useActiveGroupMembers } from '../hooks/useActiveGroupMembers';
@@ -78,6 +80,9 @@ import { useGroupMemberLocations } from '../hooks/useGroupMemberLocations';
 
 const mockedUseGroupsContext = useGroupsContext as jest.MockedFunction<
   typeof useGroupsContext
+>;
+const mockedUseNotificationsContext = useNotificationsContext as jest.MockedFunction<
+  typeof useNotificationsContext
 >;
 const mockedUseGeofences = useGeofences as jest.MockedFunction<typeof useGeofences>;
 const mockedUseForegroundLocation = useForegroundLocation as jest.MockedFunction<
@@ -107,6 +112,9 @@ beforeEach(() => {
     loading: false,
     errorMessage: null,
     refetch: jest.fn(),
+  });
+  mockedUseNotificationsContext.mockReturnValue({
+    pushPermissionStatus: 'granted',
   });
 });
 
@@ -494,5 +502,42 @@ describe('FamilyMap', () => {
 
     // Should not show the "Join or create" empty state while loading
     expect(screen.queryByText('Join or create a group to see family members')).toBeNull();
+  });
+
+  it('shows NotificationPermissionBanner when push permission is denied', async () => {
+    mockedUseNotificationsContext.mockReturnValue({
+      pushPermissionStatus: 'denied',
+    });
+
+    mockedUseGroupsContext.mockReturnValue({
+      groups: [],
+      activeGroupId: null,
+      setActiveGroupId: jest.fn(),
+      loading: false,
+      errorMessage: null,
+      refetchGroups: jest.fn(),
+    });
+
+    mockedUseForegroundLocation.mockReturnValue({
+      coords: mockCoords,
+      timestamp: Date.now(),
+      errorMessage: null,
+    });
+
+    mockedUseActiveGroupMembers.mockReturnValue({
+      members: [],
+      loading: false,
+      errorMessage: null,
+    });
+
+    mockedUseGroupMemberLocations.mockReturnValue({
+      locations: {},
+      loading: false,
+      errorMessage: null,
+    });
+
+    await render(<FamilyMap />);
+
+    expect(screen.getByText('Notifications are off')).toBeTruthy();
   });
 });

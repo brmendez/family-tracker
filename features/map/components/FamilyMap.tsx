@@ -5,8 +5,10 @@ import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-nati
 import MapView, { Callout, Marker, type Region } from 'react-native-maps';
 
 import { useGroupsContext } from '../../../context/groups.context';
+import { useNotificationsContext } from '../../../context/notifications.context';
 import { MAP_INITIAL_DELTA } from '../../../lib/constants';
 import { useGeofences } from '../../geofencing/hooks/useGeofences';
+import { NotificationPermissionBanner } from '../../notifications/components/NotificationPermissionBanner';
 import { useActiveGroupMembers } from '../hooks/useActiveGroupMembers';
 import { useForegroundLocation } from '../hooks/useForegroundLocation';
 import { useGroupMemberLocations } from '../hooks/useGroupMemberLocations';
@@ -19,6 +21,10 @@ import { OtherUserMarker } from './OtherUserMarker';
 //
 // FT-12: generalizes from "the other user" (v1 hardcode) to "the active
 // group's other members," switchable via GroupSwitcher per decision #4.
+//
+// FT-15: renders NotificationPermissionBanner when push permission is
+// denied — this is the app's landing screen, so it lives here rather
+// than (or in addition to) GroupsScreen, which most users won't visit.
 export const FamilyMap = () => {
   const router = useRouter();
   const { coords, timestamp, errorMessage } = useForegroundLocation();
@@ -32,6 +38,7 @@ export const FamilyMap = () => {
   const { geofences, refetch: refetchGeofences } = useGeofences(
     activeGroupId ?? undefined,
   );
+  const { pushPermissionStatus } = useNotificationsContext();
 
   useFocusEffect(
     useCallback(() => {
@@ -77,6 +84,11 @@ export const FamilyMap = () => {
 
   return (
     <View style={styles.container}>
+      {pushPermissionStatus === 'denied' ? (
+        <View style={styles.bannerWrapper}>
+          <NotificationPermissionBanner />
+        </View>
+      ) : null}
       <GroupSwitcher
         groups={groups}
         activeGroupId={activeGroupId}
@@ -134,6 +146,9 @@ export const FamilyMap = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  bannerWrapper: {
+    margin: 12,
   },
   map: {
     flex: 1,
