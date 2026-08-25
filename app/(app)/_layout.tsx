@@ -15,6 +15,11 @@ import { GroupsProvider } from '../../context/groups.context';
  * FT-12: wraps the Stack in GroupsProvider. Mounted here rather than the
  * root layout so it naturally remounts fresh on sign-out/sign-in via the
  * existing Stack.Protected swap — no manual reset logic needed.
+ *
+ * FT-14 redesign, piece 1: adds a "places" screen, presented as a modal
+ * (native-stack's presentation option lives on the Screen entry in the
+ * navigator that performs the push, not in the nested layout itself) so
+ * it overlays the map instead of replacing it.
  */
 const AppLayout = () => {
   const router = useRouter();
@@ -36,6 +41,10 @@ const AppLayout = () => {
           }}
         />
         <Stack.Screen name="groups" />
+        <Stack.Screen
+          name="places"
+          options={{ presentation: 'modal', headerShown: false }}
+        />
       </Stack>
     </GroupsProvider>
   );
