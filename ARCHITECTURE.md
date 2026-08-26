@@ -631,9 +631,9 @@ the solo group, not back to "Family."
 | FT-14 | "Zones" — create/manage geofences from the main map (foreground) | FT-13, FT-12 | ✅ Done |
 | FT-14b | Autocomplete/named-place upgrade for Zones address search (v1 ships exact-address geocoding only) | FT-14 | ⬜ |
 | FT-15 | Push notification infrastructure (shared primitive — reused later by v6) | FT-2 | ✅ Done |
-| FT-16 | Foreground geofence detection + in-app alert | FT-14, FT-6 | ⬜ |
-| FT-17 | Push notification on entry/exit (server-triggered webhook) | FT-15, FT-16 | ⬜ |
-| **FT-18** | **Background geofence detection.** Requires the "Always" location permission and background task registration — a bigger native/permissions lift than the dev build requirement itself, which actually started at FT-4. | FT-16, FT-17 | ⬜ |
+| FT-16 | Foreground geofence detection + in-app alert **to other group members** (not the crossing user themselves — see corrected FT-16 detail below) | FT-14, FT-6 | ⬜ |
+| FT-17 | Push notification to **other group members** on entry/exit (server-triggered webhook) — covers the case where FT-16's in-app alert can't reach them because their app isn't foregrounded | FT-15, FT-16 | ⬜ |
+| **FT-18** | **Background geofence detection.** Lets the *crossing* user's own detection keep running when their app is backgrounded/closed, so FT-16/17 have something to detect and alert other members on even then. Requires the "Always" location permission and background task registration — a bigger native/permissions lift than the dev build requirement itself, which actually started at FT-4. | FT-16, FT-17 | ⬜ |
 
 ### FT-13 detail — Schema: `geofences` + `geofence_events`, group-scoped
 
@@ -920,6 +920,45 @@ local script (service-role key, not part of the app/repo) targeting your
 own `user_id`; confirm the push is received both foregrounded (visible
 banner, per the handler config) and backgrounded (system notification),
 and that tapping it doesn't crash.
+
+---
+
+### FT-16 detail — Foreground geofence detection + in-app alert *(DESIGN CORRECTED 2026-08-25)*
+
+**Correction:** The original version of this ticket (built + code-reviewed once) shipped a **self-only** alert — the crossing user saw their own "Entered {name}" banner. Confirmed wrong with the PO: the alert should notify **other** foregrounded group members when someone crosses a zone, not the crossing user themselves (e.g. Kirsten arrives home → Brian's foregrounded phone shows "Kirsten entered Home"; Brian's own phone shows nothing for his own arrival). Detection and logging are untouched — this only changes how the alert is *delivered*.
+
+**Rework scope:**
+- **Rebuild:** `useGeofenceAlert.ts`, `GeofenceAlertBanner.tsx` — realtime-subscription + other-member-filtering logic replaces the local-crossing-driven banner.
+- **Unchanged, reuse as-is:** `distance.ts`, `useGeofenceDetection.ts`, `useLogGeofenceEvent.ts` — still "I crossed a zone, log it to `geofence_events`," per-device against the device's own location. `GeofenceCrossing` type (local crossing shape) is also unchanged.
+- **Edited again:** `FamilyMap.tsx` (new props into `useGeofenceAlert`), `geofence.types.ts` (new `GeofenceAlertEvent` type, alongside untouched `GeofenceCrossing`).
+
+**Type:** Feature (unchanged)
+
+**Why:** unchanged premise — FT-13/14 give geofences and zone management but nothing surfaces a crossing live. FT-16 closes that loop for the foreground case: watch group members' `geofence_events` writes in realtime and alert on the ones that aren't your own. Still no push, still no background — FT-17/FT-18.
+
+**Schema:** None new, confirmed. FT-13's `geofence_events_select_group_member` RLS (`exists ... is_group_member(g.group_id)`) already permits a group member to *read* every other member's `geofence_events` rows for shared geofences — that's exactly what the realtime subscription below needs, no policy change required.
+
+**Delivery design (rebuilt) — mirrors `useGroupMemberLocations`'s realtime pattern (FT-6):**
+- `GeofenceAlertEvent` type (new, `geofence.types.ts`): `{ geofenceId: string; geofenceName: string; eventType: 'enter' | 'exit'; userId: string; displayName: string; occurredAt: string }` — same shape as `GeofenceCrossing` plus the crossing member's identity.
+- `useGeofenceAlert.ts` (rebuilt) — new signature: takes `activeGroupId`, `geofences` (id→name resolution, already held by `FamilyMap`), `members` (id→displayName resolution — reuses `useActiveGroupMembers`, which already excludes self server-side, no new lookup path), and `userId` (self, for an explicit filter). Subscribes to one unfiltered `postgres_changes` INSERT channel on `geofence_events` (e.g. `geofence_events:active_group`), keyed to `activeGroupId` — not to `geofences` content, to avoid resubscribing on every zone create/edit; the current geofence id→name map is held in a ref, updated by a separate effect off `geofences`. On each INSERT: skip if `payload.new.user_id === userId` (self-write, including from a second device on the same account, per FT-15 edge case 5); skip if `geofence_id` isn't in the current geofence ref (event belongs to a non-active group's zone, or the zone was just deleted); skip if `user_id` isn't found in `members` (stale membership/race — fail silent, no "Unknown" alert); otherwise build a `GeofenceAlertEvent` and show it. Same transient-banner mechanics as before: shows immediately, auto-dismisses after `GEOFENCE_ALERT_AUTO_DISMISS_MS`, manual dismiss cancels the timer. No initial fetch on mount (unlike `useGroupMemberLocations`) — alerts are realtime-only, no backfill of missed crossings.
+- `GeofenceAlertBanner.tsx` (rebuilt) — same controlled/banner-row shape, copy changes to `"{displayName} entered {name}"` / `"{displayName} left {name}"`.
+
+**Client scope — `FamilyMap.tsx` (edited again):** `useLogGeofenceEvent`/`useGeofenceDetection` wiring is untouched (still local crossing → log). `useGeofenceAlert` is now called with `(activeGroupId, geofences, members, userId)` instead of `(latestCrossing)`; `members` is already fetched here via `useActiveGroupMembers` for marker rendering — no new fetch added.
+
+**Permissions:** None new, unchanged.
+
+**Edge cases:**
+1. Self crossing, any device on the account — no alert on the crossing user's own phone. This is the point of the correction, not a gap to work around.
+2. Two members' phones both foregrounded on the same active group — each is alerted about the other's crossing, never their own.
+3. Active group switched — the geofence-id ref used for filtering is rebuilt from the newly active group's `geofences`; an in-flight event for the previous group that lands after the switch is filtered out (its geofence id is no longer in the ref).
+4. Crossing member has left the group, or their row in `members` hasn't loaded yet — event dropped silently rather than shown with a missing name.
+5. Geofence deleted between the crossing and the alert's arrival — dropped silently, same posture as #4.
+6. GPS jitter / rapid flapping — still no debounce (unchanged accepted posture from FT-13); each row still produces its own alert to other members.
+7. App backgrounded/killed — no subscription runs, matches detection's own posture (unchanged); FT-18's line to move.
+
+**Out of scope:** background detection (FT-18); actual push notifications (FT-17 — this is still in-app/foreground-only, just no longer self-targeted); showing your own crossing to yourself anywhere (explicitly not wanted, per PO); debounce/hysteresis; any change to `geofences`/`geofence_events` schema or RLS; a crossings-history UI; any change to `useForegroundLocation`, `useGeofences`, `useGeofenceDetection`, `useLogGeofenceEvent`, or `distance.ts`.
+
+**On-device verification:** Requires two accounts in the same group, each on a foregrounded device (or two Expo Go sessions). Have account A cross a zone boundary — confirm account B's phone shows "{A's name} entered/left {zone}" and account A's own phone shows nothing. Reverse roles. Confirm a `geofence_events` row still lands with the correct `user_id` (unchanged detection/logging path). Switch account B's active group away from the shared one, then have account A cross again — confirm B gets no alert while off that group, and does again after switching back.
 
 ---
 

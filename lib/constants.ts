@@ -21,3 +21,6 @@ export const MAP_INITIAL_DELTA = 0.01;
 
 // 15min stale threshold for open-but-stationary apps.
 export const LOCATION_STALE_THRESHOLD_MS = 15 * 60 * 1000;
+
+// Auto-dismiss delay for the in-app geofence crossing banner (FT-16).
+export const GEOFENCE_ALERT_AUTO_DISMISS_MS = 6000;

@@ -4,10 +4,15 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import MapView, { Callout, Marker, type Region } from 'react-native-maps';
 
+import { useAuth } from '../../../context/auth.context';
 import { useGroupsContext } from '../../../context/groups.context';
 import { useNotificationsContext } from '../../../context/notifications.context';
 import { MAP_INITIAL_DELTA } from '../../../lib/constants';
+import { GeofenceAlertBanner } from '../../geofencing/components/GeofenceAlertBanner';
+import { useGeofenceAlert } from '../../geofencing/hooks/useGeofenceAlert';
+import { useGeofenceDetection } from '../../geofencing/hooks/useGeofenceDetection';
 import { useGeofences } from '../../geofencing/hooks/useGeofences';
+import { useLogGeofenceEvent } from '../../geofencing/hooks/useLogGeofenceEvent';
 import { NotificationPermissionBanner } from '../../notifications/components/NotificationPermissionBanner';
 import { useActiveGroupMembers } from '../hooks/useActiveGroupMembers';
 import { useForegroundLocation } from '../hooks/useForegroundLocation';
@@ -25,8 +30,13 @@ import { OtherUserMarker } from './OtherUserMarker';
 // FT-15: renders NotificationPermissionBanner when push permission is
 // denied — this is the app's landing screen, so it lives here rather
 // than (or in addition to) GroupsScreen, which most users won't visit.
+//
+// FT-16: foreground-only geofence detection off the coords/geofences
+// already held here; alert is for OTHER members' crossings (realtime),
+// not the crossing user's own — no push (see FT-17/18).
 export const FamilyMap = () => {
   const router = useRouter();
+  const { userId } = useAuth();
   const { coords, timestamp, errorMessage } = useForegroundLocation();
   const [initialRegion, setInitialRegion] = useState<Region | null>(null);
   const { groups, activeGroupId, setActiveGroupId, loading: groupsLoading } =
@@ -47,6 +57,15 @@ export const FamilyMap = () => {
   );
 
   useLocationHistoryWriter(coords, timestamp);
+
+  const { latestCrossing } = useGeofenceDetection(coords, timestamp, geofences);
+  useLogGeofenceEvent(latestCrossing, userId);
+  const { visibleAlert, dismiss: dismissGeofenceAlert } = useGeofenceAlert(
+    activeGroupId,
+    geofences,
+    members,
+    userId,
+  );
 
   useEffect(() => {
     if (initialRegion || !coords) {
@@ -87,6 +106,11 @@ export const FamilyMap = () => {
       {pushPermissionStatus === 'denied' ? (
         <View style={styles.bannerWrapper}>
           <NotificationPermissionBanner />
+        </View>
+      ) : null}
+      {visibleAlert ? (
+        <View style={styles.bannerWrapper}>
+          <GeofenceAlertBanner alert={visibleAlert} onDismiss={dismissGeofenceAlert} />
         </View>
       ) : null}
       <GroupSwitcher
