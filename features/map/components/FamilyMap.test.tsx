@@ -1,9 +1,13 @@
 // features/map/components/FamilyMap.test.tsx
 // Mock all the hooks and components BEFORE imports
 jest.mock('../../../lib/supabase');
+jest.mock('../../../context/auth.context');
 jest.mock('../../../context/groups.context');
 jest.mock('../../../context/notifications.context');
 jest.mock('../../geofencing/hooks/useGeofences');
+jest.mock('../../geofencing/hooks/useGeofenceDetection');
+jest.mock('../../geofencing/hooks/useLogGeofenceEvent');
+jest.mock('../../geofencing/hooks/useGeofenceAlert');
 jest.mock('../hooks/useForegroundLocation');
 jest.mock('../hooks/useActiveGroupMembers');
 jest.mock('../hooks/useGroupMemberLocations');
@@ -71,13 +75,18 @@ import {
 } from '../../../test/utils';
 
 import { FamilyMap } from './FamilyMap';
+import { useAuth } from '../../../context/auth.context';
 import { useGroupsContext } from '../../../context/groups.context';
 import { useNotificationsContext } from '../../../context/notifications.context';
 import { useGeofences } from '../../geofencing/hooks/useGeofences';
+import { useGeofenceDetection } from '../../geofencing/hooks/useGeofenceDetection';
+import { useLogGeofenceEvent } from '../../geofencing/hooks/useLogGeofenceEvent';
+import { useGeofenceAlert } from '../../geofencing/hooks/useGeofenceAlert';
 import { useForegroundLocation } from '../hooks/useForegroundLocation';
 import { useActiveGroupMembers } from '../hooks/useActiveGroupMembers';
 import { useGroupMemberLocations } from '../hooks/useGroupMemberLocations';
 
+const mockedUseAuth = useAuth as jest.MockedFunction<typeof useAuth>;
 const mockedUseGroupsContext = useGroupsContext as jest.MockedFunction<
   typeof useGroupsContext
 >;
@@ -85,6 +94,15 @@ const mockedUseNotificationsContext = useNotificationsContext as jest.MockedFunc
   typeof useNotificationsContext
 >;
 const mockedUseGeofences = useGeofences as jest.MockedFunction<typeof useGeofences>;
+const mockedUseGeofenceDetection = useGeofenceDetection as jest.MockedFunction<
+  typeof useGeofenceDetection
+>;
+const mockedUseLogGeofenceEvent = useLogGeofenceEvent as jest.MockedFunction<
+  typeof useLogGeofenceEvent
+>;
+const mockedUseGeofenceAlert = useGeofenceAlert as jest.MockedFunction<
+  typeof useGeofenceAlert
+>;
 const mockedUseForegroundLocation = useForegroundLocation as jest.MockedFunction<
   typeof useForegroundLocation
 >;
@@ -107,12 +125,23 @@ const mockCoords = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockedUseAuth.mockReturnValue({
+    session: null,
+    userId: 'current-user',
+    profile: null,
+    loading: false,
+    signUp: jest.fn(),
+    signIn: jest.fn(),
+    signOut: jest.fn(),
+  });
   mockedUseGeofences.mockReturnValue({
     geofences: [],
     loading: false,
     errorMessage: null,
     refetch: jest.fn(),
   });
+  mockedUseGeofenceDetection.mockReturnValue({ latestCrossing: null });
+  mockedUseGeofenceAlert.mockReturnValue({ visibleAlert: null, dismiss: jest.fn() });
   mockedUseNotificationsContext.mockReturnValue({
     pushPermissionStatus: 'granted',
   });
