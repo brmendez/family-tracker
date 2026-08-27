@@ -678,7 +678,7 @@ the solo group, not back to "Family."
 | FT-15 | Push notification infrastructure (shared primitive — reused later by v6) | FT-2 | ✅ Done |
 | FT-16 | Foreground geofence detection + in-app alert **to other group members** (not the crossing user themselves — see corrected FT-16 detail below) | FT-14, FT-6 | ✅ Done |
 | FT-17 | Push notification to **other group members** on entry/exit (server-triggered webhook) — covers the case where FT-16's in-app alert can't reach them because their app isn't foregrounded | FT-15, FT-16 | ✅ Done |
-| **FT-18** | **Background geofence detection.** Keeps the crossing user's own detection running when the app is backgrounded/closed, via iOS native region monitoring — not a JS watch loop. Requires the "Always" location permission plus background task registration; see FT-18 detail below. | FT-16, FT-17 | ⬜ |
+| **FT-18** | **Background geofence detection.** Keeps the crossing user's own detection running when the app is backgrounded/closed, via iOS native region monitoring — not a JS watch loop. Requires the "Always" location permission plus background task registration; see FT-18 detail below. | FT-16, FT-17 | ✅ Done |
 
 ### FT-13 detail — Schema: `geofences` + `geofence_events`, group-scoped
 
