@@ -15,6 +15,7 @@ import { useGeofences } from '../../geofencing/hooks/useGeofences';
 import { useLogGeofenceEvent } from '../../geofencing/hooks/useLogGeofenceEvent';
 import { NotificationPermissionBanner } from '../../notifications/components/NotificationPermissionBanner';
 import { useActiveGroupMembers } from '../hooks/useActiveGroupMembers';
+import { useDeconflictedMarkerPositions } from '../hooks/useDeconflictedMarkerPositions';
 import { useForegroundLocation } from '../hooks/useForegroundLocation';
 import { useGroupMemberLocations } from '../hooks/useGroupMemberLocations';
 import { useLocationHistoryWriter } from '../hooks/useLocationHistoryWriter';
@@ -67,6 +68,35 @@ export const FamilyMap = () => {
     userId,
   );
 
+  const visibleMembers = useMemo(
+    () => members.filter((member) => locations[member.id]),
+    [members, locations],
+  );
+
+  // FT-29: dedupe/nudge markers that render on top of each other (own
+  // marker included — see ARCHITECTURE.md "why the own marker is included").
+  const combinedPositions = useMemo(() => {
+    if (!coords) {
+      return [];
+    }
+
+    const memberPositions = visibleMembers.map((member) => ({
+      id: member.id,
+      latitude: locations[member.id].latitude,
+      longitude: locations[member.id].longitude,
+    }));
+
+    if (!userId) {
+      return memberPositions;
+    }
+
+    return [
+      { id: userId, latitude: coords.latitude, longitude: coords.longitude },
+      ...memberPositions,
+    ];
+  }, [coords, userId, visibleMembers, locations]);
+  const resolvedPositions = useDeconflictedMarkerPositions(combinedPositions);
+
   useEffect(() => {
     if (initialRegion || !coords) {
       return;
@@ -96,7 +126,6 @@ export const FamilyMap = () => {
     );
   }
 
-  const visibleMembers = members.filter((member) => locations[member.id]);
   const noGroups = !groupsLoading && groups.length === 0;
   const noOtherMembers =
     !groupsLoading && !membersLoading && groups.length > 0 && members.length === 0;
@@ -129,7 +158,12 @@ export const FamilyMap = () => {
       ) : null}
       <MapView style={styles.map} initialRegion={initialRegion}>
         <Marker
-          coordinate={{ latitude: coords.latitude, longitude: coords.longitude }}
+          coordinate={
+            (userId && resolvedPositions[userId]) || {
+              latitude: coords.latitude,
+              longitude: coords.longitude,
+            }
+          }
           title="You"
           accessibilityLabel="Your location"
         />
@@ -138,6 +172,7 @@ export const FamilyMap = () => {
             key={member.id}
             displayName={member.displayName}
             location={locations[member.id]}
+            coordinate={resolvedPositions[member.id]}
           />
         ))}
         {geofences.map((geofence) => (

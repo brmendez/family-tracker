@@ -143,6 +143,49 @@ movement, while catching a closed app meaningfully faster than an hour.
 
 ---
 
+### FT-29 detail — Deconflict overlapping member markers (display-only coordinate offset)
+
+**Type:** Bug
+
+**Why:** `FamilyMap.tsx` renders one plain `<Marker>` for the current user and one `<OtherUserMarker>` per visible group member, each with its own native title/callout — there's no custom tap/selection state anywhere in this stack. When two markers' true coordinates are very close (the common "two people in the same house/car" case), `react-native-maps`'/MapKit's hit-testing occasionally resolves a tap against both nearby annotations, firing the second one's callout ~1s after the first. This is a rendering/hit-testing artifact, not app logic to debug.
+
+**Decision:** display-only coordinate offset, not `react-native-map-clustering`. Clustering is the right call once member counts are large enough that *visual density* (not just occasional mis-tap) is the problem — it's not, today: v1 has exactly two users, and groups (FT-12) are family/household-sized, not crowds. Clustering would also be a materially bigger blast radius here — new native dependency, and it replaces `<Marker>` rendering for the whole map (own marker, member markers, *and* FT-14's geofence pins all sit in the same `<MapView>`), none of which is otherwise touched by this fix. The offset approach fixes the exact reported case with no new dependency and edits to two existing map-feature files.
+
+**Scope:**
+- `lib/constants.ts` — two new constants alongside the existing thresholds: `MARKER_OVERLAP_THRESHOLD_M` (recommend 20 — pins this close are indistinguishable at ordinary zoom and are exactly the mis-tap case) and `MARKER_OFFSET_M` (recommend 8 — enough to separate two pins' native hit targets, small enough that a nudged marker still reads as "here," not "somewhere else").
+- `features/map/lib/deconflictMarkerPositions.ts` (new, pure function, no React/hooks — cheaply unit-testable without RNTL): `deconflictMarkerPositions(positions: { id: string; latitude: number; longitude: number }[]): Record<string, { latitude: number; longitude: number }>`. Sorts input by `id` first (stable regardless of array/fetch order), then greedily clusters positions within `MARKER_OVERLAP_THRESHOLD_M` of each other's cluster anchor. The lowest-id member of each cluster keeps its true coordinate; every other member in that cluster is nudged `MARKER_OFFSET_M` out along a distinct angle (evenly split around the anchor by cluster size) so re-renders never flip which pin moves.
+- `features/map/hooks/useDeconflictedMarkerPositions.ts` (new, thin `useMemo` wrapper over the pure function above — same "pure derivation behind a small hook" shape as FT-28's `useLocationStaleness`): `useDeconflictedMarkerPositions(positions: { id: string; latitude: number; longitude: number }[]): Record<string, { latitude: number; longitude: number }>`.
+- `features/map/components/FamilyMap.tsx` (edited): builds one combined array — the current user (`id: userId`, from `coords`) plus every `visibleMember` (`id`, from `locations[member.id]`) — runs it through `useDeconflictedMarkerPositions`, and passes each entry's resolved `{ latitude, longitude }` as the new `coordinate` prop below instead of the raw `coords`/`location` lat/lng.
+- `features/map/components/OtherUserMarker.tsx` (edited): new required prop `coordinate: { latitude: number; longitude: number }`, used for the `<Marker coordinate>` instead of `location.latitude`/`location.longitude`. `location` is still passed and still used for `useLocationStaleness(location.recordedAt)` — only the rendered position is decoupled from it.
+
+**Why the own marker is included:** the reported symptom (tap one pin, the *other* pin's callout follows ~1s later) is exactly what happens when two people are physically together — own marker and one `OtherUserMarker` at nearly the same spot. Restricting the fix to `OtherUserMarker`-vs-`OtherUserMarker` pairs would leave the actual reported case unfixed.
+
+**Edge cases:**
+1. v1's two-user case, both at the same location — the reported bug; anchor (lower id) renders true position, the other nudges 8m.
+2. Three or more members clustered at one spot (future, larger groups) — each non-anchor member gets its own angle around the anchor; doesn't fully solve dense same-spot clustering (stated up front in the ticket's own description), consistent with why this is the smaller-lift fix, not the scale fix.
+3. Members move apart/back together between renders — recomputed fresh each render off current `locations`/`coords`, no animation/tween; a pin can "snap" between offset and true position as a cluster forms/dissolves, acceptable for this bug fix, not a smooth transition.
+4. No geofence-pin interaction — FT-14's zone markers already render their own `<Callout>` explicitly and aren't part of the reported bug; left untouched.
+
+**Out of scope:**
+- `react-native-map-clustering` or any clustering library adoption.
+- Any offset/dedup logic for FT-14's geofence pins.
+- Zoom-aware or screen-space (pixel-distance) overlap detection — this is a fixed real-world-meters offset, so how separated two pins *look* still varies with zoom; not solved here, matches the ticket's own stated tradeoff.
+- Any UI indicating a pin has been nudged ("approximate position" badge, etc.) — the offset is meant to be small and unnoticed, not disclosed.
+- Any change to `useGroupMemberLocations`, `useForegroundLocation`, `useActiveGroupMembers`, or `useLocationStaleness`'s data/fetch logic.
+
+**On-device verification:** Two accounts signed in on devices physically next to each other (same room), both members of the same active group. Confirm both pins render slightly apart (not perfectly stacked). Tap one pin — confirm only that pin's callout appears and no second callout fires ~1s later; tap the other pin, confirm the same. Separate the two devices to a normal distance apart and confirm both markers still look and behave normally.
+
+**Files touched:**
+- `lib/constants.ts`
+- `features/map/lib/deconflictMarkerPositions.ts` (new)
+- `features/map/hooks/useDeconflictedMarkerPositions.ts` (new)
+- `features/map/components/FamilyMap.tsx`
+- `features/map/components/OtherUserMarker.tsx`
+
+**No overlap with FT-17:** this list shares zero files with FT-17's three touched files (`supabase/migrations/0012_geofence_push_webhook.sql`, `supabase/functions/geofence-alert-push/index.ts`, `app/_layout.tsx`) — FT-29 is entirely map-feature client code, FT-17 is entirely a server-side webhook/edge-function plus root-layout notification-handler edit, so FT-29's senior-dev work is safe to run in parallel with FT-17's in-progress unit-testing pipeline.
+
+---
+
 ## V2 — Groups & Membership *(blocked by v1)*
 
 | Ticket | Description | Depends on | Status |

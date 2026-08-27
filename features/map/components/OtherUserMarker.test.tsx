@@ -35,7 +35,11 @@ describe('OtherUserMarker', () => {
     mockUseLocationStaleness.mockReturnValue({ label: 'just now', isStale: false });
 
     const { toJSON } = await render(
-      <OtherUserMarker displayName="Alice" location={location} />,
+      <OtherUserMarker
+        displayName="Alice"
+        location={location}
+        coordinate={{ latitude: location.latitude, longitude: location.longitude }}
+      />,
     );
 
     const marker = toJSON() as any;
@@ -57,7 +61,11 @@ describe('OtherUserMarker', () => {
     mockUseLocationStaleness.mockReturnValue({ label, isStale: true });
 
     const { toJSON } = await render(
-      <OtherUserMarker displayName="Alice" location={location} />,
+      <OtherUserMarker
+        displayName="Alice"
+        location={location}
+        coordinate={{ latitude: location.latitude, longitude: location.longitude }}
+      />,
     );
 
     const marker = toJSON() as any;
@@ -68,7 +76,13 @@ describe('OtherUserMarker', () => {
   it('passes location.recordedAt through to useLocationStaleness', async () => {
     mockUseLocationStaleness.mockReturnValue({ label: 'just now', isStale: false });
 
-    await render(<OtherUserMarker displayName="Alice" location={location} />);
+    await render(
+      <OtherUserMarker
+        displayName="Alice"
+        location={location}
+        coordinate={{ latitude: location.latitude, longitude: location.longitude }}
+      />,
+    );
 
     expect(mockUseLocationStaleness).toHaveBeenCalledWith(location.recordedAt);
   });
@@ -77,7 +91,11 @@ describe('OtherUserMarker', () => {
     mockUseLocationStaleness.mockReturnValue({ label: 'just now', isStale: false });
 
     const { toJSON } = await render(
-      <OtherUserMarker displayName="Alice" location={location} />,
+      <OtherUserMarker
+        displayName="Alice"
+        location={location}
+        coordinate={{ latitude: location.latitude, longitude: location.longitude }}
+      />,
     );
 
     const marker = toJSON() as any;

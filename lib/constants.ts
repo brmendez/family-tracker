@@ -24,3 +24,8 @@ export const LOCATION_STALE_THRESHOLD_MS = 15 * 60 * 1000;
 
 // Auto-dismiss delay for the in-app geofence crossing banner (FT-16).
 export const GEOFENCE_ALERT_AUTO_DISMISS_MS = 6000;
+
+// Marker deconfliction (FT-29): pins this close mis-trigger each other's
+// native callout, so cluster and nudge apart by a small display-only offset.
+export const MARKER_OVERLAP_THRESHOLD_M = 20;
+export const MARKER_OFFSET_M = 8;
