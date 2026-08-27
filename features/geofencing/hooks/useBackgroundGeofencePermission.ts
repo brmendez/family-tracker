@@ -1,6 +1,7 @@
 // features/geofencing/hooks/useBackgroundGeofencePermission.ts
 import * as Location from 'expo-location';
 import { useCallback, useEffect, useState } from 'react';
+import { AppState } from 'react-native';
 
 export type BackgroundGeofencePermissionState =
   | 'checking'
@@ -29,6 +30,17 @@ export const useBackgroundGeofencePermission = (): UseBackgroundGeofencePermissi
 
   useEffect(() => {
     refreshStatus();
+
+    // Settings changes only take effect on return to the app, not while mounted.
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        refreshStatus();
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
   }, [refreshStatus]);
 
   const requestPermission = useCallback(async () => {

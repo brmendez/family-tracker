@@ -1,6 +1,7 @@
 // features/geofencing/hooks/useBackgroundGeofencePermission.test.ts
 import { renderHook, act } from '@testing-library/react-native';
 import * as Location from 'expo-location';
+import { AppState } from 'react-native';
 
 import { useBackgroundGeofencePermission } from './useBackgroundGeofencePermission';
 
@@ -9,8 +10,25 @@ jest.mock('expo-location');
 const mockedLocation = Location as jest.Mocked<typeof Location>;
 
 describe('useBackgroundGeofencePermission', () => {
+  let appStateHandler: ((state: string) => void) | null = null;
+  let appStateSubscription: { remove: jest.Mock };
+
   beforeEach(() => {
     jest.clearAllMocks();
+
+    appStateHandler = null;
+    appStateSubscription = { remove: jest.fn() };
+
+    jest.spyOn(AppState, 'addEventListener').mockImplementation((event, handler) => {
+      if (event === 'change') {
+        appStateHandler = handler as any;
+      }
+      return appStateSubscription as any;
+    });
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
   });
 
   it('initializes with "checking" status before effect runs', async () => {
@@ -132,6 +150,43 @@ describe('useBackgroundGeofencePermission', () => {
     await renderHook(() => useBackgroundGeofencePermission());
 
     expect(mockedLocation.getBackgroundPermissionsAsync).toHaveBeenCalled();
+  });
+
+  it('re-checks permission status when the app returns to the foreground', async () => {
+    mockedLocation.getBackgroundPermissionsAsync.mockResolvedValue({
+      status: Location.PermissionStatus.DENIED,
+      canAskAgain: true,
+    } as any);
+
+    const { result } = await renderHook(() => useBackgroundGeofencePermission());
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(result.current.status).toBe('undetermined');
+
+    mockedLocation.getBackgroundPermissionsAsync.mockResolvedValue({
+      status: Location.PermissionStatus.GRANTED,
+      canAskAgain: false,
+    } as any);
+
+    await act(async () => {
+      appStateHandler!('active');
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(result.current.status).toBe('granted');
+  });
+
+  it('unsubscribes from AppState on unmount', async () => {
+    const { unmount } = await renderHook(() => useBackgroundGeofencePermission());
+
+    expect(appStateSubscription.remove).not.toHaveBeenCalled();
+
+    await unmount();
+
+    expect(appStateSubscription.remove).toHaveBeenCalled();
   });
 
   it('calls requestBackgroundPermissionsAsync when requestPermission is called', async () => {
