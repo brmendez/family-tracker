@@ -963,6 +963,38 @@ and that tapping it doesn't crash.
 
 ---
 
+### FT-17 detail — Push notification to other group members on entry/exit (server-triggered webhook)
+
+**Type:** Feature
+
+**Why:** FT-16's in-app alert only reaches other group members whose app is foregrounded and subscribed to the realtime channel — the common case (closed/backgrounded app) gets nothing. FT-17 closes that gap server-side: a Database Webhook fires on every `geofence_events` INSERT, resolves the crossing event's other group members, and sends each of them a real push via FT-15's `sendPushNotification`. Detection/logging (FT-16) is unchanged; this is a second delivery path off the same write, not a replacement for FT-16.
+
+**Schema:** None new. Reads `geofence_events` (FT-13), `geofences.group_id`/`name` (FT-13), `group_members`/`profiles` (FT-7) — all already RLS-protected but this reads under `service_role`, bypassing RLS by design (server-side dispatch, not client reads).
+
+**Server-side logic** (new migration `0011_geofence_push_webhook.sql` + new edge function):
+- `supabase/functions/geofence-alert-push/index.ts` — HTTP handler invoked by the webhook below. Payload is the standard Database Webhook shape (`{ type: 'INSERT', table: 'geofence_events', record: {...} }`). Steps: verify a shared secret header (Function secret, set via `supabase secrets set`) so the endpoint can't be hit by anyone who guesses the URL; look up the geofence (`name`, `group_id`) for `record.geofence_id` — if not found (deleted in the race between insert and webhook firing), no-op and return 200; look up the crossing user's `display_name`; query `group_members` for that `group_id` excluding `record.user_id` to get recipient ids — if empty (sole member), no-op; build `title`/`body` (`"{displayName} entered {zoneName}"` / `"...left..."`, same copy convention as FT-16's banner) and `data: { type: 'geofence_alert', geofenceId, eventType, userId, occurredAt }`; call FT-15's `sendPushNotification({ userIds: recipientIds, title, body, data })` (imported directly, same Edge Functions project).
+- Trigger: a Database Webhook (Supabase's built-in `supabase_functions.http_request` trigger), `AFTER INSERT ON geofence_events FOR EACH ROW`, POSTing to the deployed function URL with the shared-secret header. Configured via migration (not dashboard-only) so it's versioned like every other schema change here.
+- No new RLS/grants — the function runs under the service-role key, same posture as FT-15's `sendPushNotification`.
+
+**Foreground-banner decision (resolved, not left ambiguous):** When the receiving member's app is foregrounded, the push does **not** also present as a native banner — FT-16's realtime in-app alert already covers that exact case (arrives on the same event, same content, typically faster since it skips the webhook/HTTP round trip). Showing both would mean the same crossing produces two visibly different-looking notices back to back on one screen. `app/_layout.tsx`'s notification handler (FT-15) is edited, additive/conditional only: when `notification.request.content.data.type === 'geofence_alert'`, return `shouldShowBanner: false` (and `shouldPlaySound: false`) — every other notification type (e.g. FT-27's future dangerous-activity push) keeps FT-15's existing show-while-foregrounded behavior. Backgrounded/killed apps are unaffected either way — the handler never runs there, so those pushes always surface as normal system notifications regardless of type. This is the entire client-side change this ticket makes.
+
+**Client scope:** the one conditional edit to `app/_layout.tsx` above. No new screens, hooks, or components — recipients already have FT-15's push registration and FT-16's in-app path; this ticket only adds the missing delivery leg.
+
+**Edge cases:**
+1. Geofence deleted between the crossing insert and the webhook firing — function no-ops (geofence lookup returns nothing), no crash, no orphaned push.
+2. Crossing user is the group's sole member — recipient query returns empty, no-op, no error.
+3. Recipient has push permission denied / no `push_tokens` row — `sendPushNotification` already treats a userId with no tokens as a no-op (FT-15 behavior, unchanged).
+4. Recipient has multiple devices — one push per token, same fan-out FT-15 already does; not new to this ticket.
+5. Recipient foregrounded on a *different* active group than the crossing one — still gets the push (webhook has no concept of "active group," it targets everyone in the geofence's group except the crosser); FT-16's in-app alert would have filtered this out via `activeGroupId`, so this is a real, narrow divergence between the two delivery paths worth flagging, not fixing here — the push is arguably still correct (a crossing happened in a group they belong to), just not deduped against their currently-viewed group.
+6. Rapid duplicate enter/exit rows (GPS flapping, same accepted posture as FT-13/FT-16) — each row fires its own webhook call and its own push; no dedupe/debounce added here either.
+7. Webhook delivery failure/retry (Supabase webhooks retry on non-2xx) — the function is idempotent-safe to re-run (same `geofence_events` row just re-triggers the same lookup/send), so a retry duplicating one push is an acceptable, rare cost, not guarded against explicitly.
+
+**Out of scope:** background detection (FT-18 — this ticket only reacts to whatever writes `geofence_events`, foreground or eventually background, without caring which); notification tap → navigation (flagged as a follow-up, same as FT-15's own "out of scope" note — `data.type`/`data.geofenceId` are already shaped to support it later); dedupe/debounce of rapid crossings; any change to FT-13's schema/RLS, FT-15's `sendPushNotification`/`push_tokens`, or FT-16's realtime alert logic; Android (out of scope for the whole roadmap); reconciling case #5 above (push not scoped to the recipient's active group) — flagged, not solved.
+
+**On-device verification:** Two accounts sharing a group, each with push permission granted (FT-15) and at least one zone (FT-14). With account B's app **backgrounded**, have account A cross the zone boundary — confirm B receives a system push notification ("A entered/left {zone}") and tapping it opens the app without crashing. Repeat with B's app **foregrounded on the same group** — confirm B sees FT-16's in-app banner but **no** native banner/sound from the push (single notice, not two). Repeat with B foregrounded but on a **different** active group — confirm B still receives the native push (case #5) despite seeing no in-app banner. Confirm account A never receives a push for its own crossing (recipient query excludes the crosser, same invariant as FT-16).
+
+---
+
 ## V4 — Per-Group Visibility Controls *(blocked by v2)*
 
 | Ticket | Description | Depends on | Status |

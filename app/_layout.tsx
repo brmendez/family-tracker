@@ -5,17 +5,13 @@ import { StatusBar } from 'expo-status-bar';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { AuthProvider, useAuth } from '../context/auth.context';
+import { handleNotification } from '../features/notifications/utils/notificationHandler';
 
 // FT-15: Expo's default handler suppresses a push while the app is
 // foregrounded — this makes one display as a banner instead. Config
 // only, not tied to auth state, so it lives at module scope.
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: false,
-    shouldSetBadge: false,
-  }),
+  handleNotification,
 });
 
 const RootNavigator = () => {
