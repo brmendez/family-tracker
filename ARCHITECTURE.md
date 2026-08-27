@@ -679,6 +679,7 @@ the solo group, not back to "Family."
 | FT-16 | Foreground geofence detection + in-app alert **to other group members** (not the crossing user themselves — see corrected FT-16 detail below) | FT-14, FT-6 | ✅ Done |
 | FT-17 | Push notification to **other group members** on entry/exit (server-triggered webhook) — covers the case where FT-16's in-app alert can't reach them because their app isn't foregrounded | FT-15, FT-16 | ✅ Done |
 | **FT-18** | **Background geofence detection.** Keeps the crossing user's own detection running when the app is backgrounded/closed, via iOS native region monitoring — not a JS watch loop. Requires the "Always" location permission plus background task registration; see FT-18 detail below. | FT-16, FT-17 | ✅ Done |
+| FT-31 | UX polish for `BackgroundLocationPermissionBanner` (FT-18) — flagged during on-device QA (2026-08-27): the banner doesn't read as tappable (no button styling/affordance) and it's not obvious a tap is even required to grant "Always" location. Not a functional bug — background detection itself works — just a discoverability gap. | FT-18 | ⬜ |
 
 ### FT-13 detail — Schema: `geofences` + `geofence_events`, group-scoped
 
