@@ -633,7 +633,7 @@ the solo group, not back to "Family."
 | FT-14b | Autocomplete/named-place upgrade for Zones address search (v1 ships exact-address geocoding only) | FT-14 | ⬜ |
 | FT-15 | Push notification infrastructure (shared primitive — reused later by v6) | FT-2 | ✅ Done |
 | FT-16 | Foreground geofence detection + in-app alert **to other group members** (not the crossing user themselves — see corrected FT-16 detail below) | FT-14, FT-6 | ✅ Done |
-| FT-17 | Push notification to **other group members** on entry/exit (server-triggered webhook) — covers the case where FT-16's in-app alert can't reach them because their app isn't foregrounded | FT-15, FT-16 | ⬜ |
+| FT-17 | Push notification to **other group members** on entry/exit (server-triggered webhook) — covers the case where FT-16's in-app alert can't reach them because their app isn't foregrounded | FT-15, FT-16 | ✅ Done |
 | **FT-18** | **Background geofence detection.** Lets the *crossing* user's own detection keep running when their app is backgrounded/closed, so FT-16/17 have something to detect and alert other members on even then. Requires the "Always" location permission and background task registration — a bigger native/permissions lift than the dev build requirement itself, which actually started at FT-4. | FT-16, FT-17 | ⬜ |
 
 ### FT-13 detail — Schema: `geofences` + `geofence_events`, group-scoped
