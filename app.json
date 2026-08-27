@@ -3,6 +3,7 @@
     "name": "family-tracker",
     "slug": "family-tracker",
     "version": "1.0.0",
+    "scheme": "familytracker",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
