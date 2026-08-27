@@ -678,7 +678,7 @@ the solo group, not back to "Family."
 | FT-15 | Push notification infrastructure (shared primitive — reused later by v6) | FT-2 | ✅ Done |
 | FT-16 | Foreground geofence detection + in-app alert **to other group members** (not the crossing user themselves — see corrected FT-16 detail below) | FT-14, FT-6 | ✅ Done |
 | FT-17 | Push notification to **other group members** on entry/exit (server-triggered webhook) — covers the case where FT-16's in-app alert can't reach them because their app isn't foregrounded | FT-15, FT-16 | ✅ Done |
-| **FT-18** | **Background geofence detection.** Lets the *crossing* user's own detection keep running when their app is backgrounded/closed, so FT-16/17 have something to detect and alert other members on even then. Requires the "Always" location permission and background task registration — a bigger native/permissions lift than the dev build requirement itself, which actually started at FT-4. | FT-16, FT-17 | ⬜ |
+| **FT-18** | **Background geofence detection.** Keeps the crossing user's own detection running when the app is backgrounded/closed, via iOS native region monitoring — not a JS watch loop. Requires the "Always" location permission plus background task registration; see FT-18 detail below. | FT-16, FT-17 | ⬜ |
 
 ### FT-13 detail — Schema: `geofences` + `geofence_events`, group-scoped
 
@@ -1036,6 +1036,193 @@ and that tapping it doesn't crash.
 **Out of scope:** background detection (FT-18 — this ticket only reacts to whatever writes `geofence_events`, foreground or eventually background, without caring which); notification tap → navigation (flagged as a follow-up, same as FT-15's own "out of scope" note — `data.type`/`data.geofenceId` are already shaped to support it later); dedupe/debounce of rapid crossings; any change to FT-13's schema/RLS, FT-15's `sendPushNotification`/`push_tokens`, or FT-16's realtime alert logic; Android (out of scope for the whole roadmap); reconciling case #5 above (push not scoped to the recipient's active group) — flagged, not solved.
 
 **On-device verification:** Two accounts sharing a group, each with push permission granted (FT-15) and at least one zone (FT-14). With account B's app **backgrounded**, have account A cross the zone boundary — confirm B receives a system push notification ("A entered/left {zone}") and tapping it opens the app without crashing. Repeat with B's app **foregrounded on the same group** — confirm B sees FT-16's in-app banner but **no** native banner/sound from the push (single notice, not two). Repeat with B foregrounded but on a **different** active group — confirm B still receives the native push (case #5) despite seeing no in-app banner. Confirm account A never receives a push for its own crossing (recipient query excludes the crosser, same invariant as FT-16).
+
+---
+
+### FT-18 detail — Background geofence detection
+
+**Type:** Feature
+
+**Why:** FT-16/17 only ever have something to detect when the crossing
+user's own app is foregrounded — `useGeofenceDetection` polls `coords`
+from `useForegroundLocation`'s JS watch loop, which stops the instant the
+app backgrounds. FT-18 makes the crossing user's *own* detection survive
+backgrounding/kill, so FT-16's alert and FT-17's push (both already
+correct and unchanged) have a `geofence_events` row to react to even
+then. This is a detection-source ticket only — no new alerting mechanism.
+
+**Design decision — native region monitoring, not a JS loop:** iOS does
+not reliably keep a JS `watchPositionAsync` loop running once
+backgrounded/suspended. Per `expo-location`'s SDK 57 docs, the supported
+pattern for detection that survives backgrounding (and, per Apple's
+documented behavior, even a user force-quitting the app) is native
+circular-region monitoring: `Location.startGeofencingAsync(taskName,
+regions)` registers regions with iOS's CoreLocation directly; the OS —
+not app JS — watches for entry/exit and wakes a
+`TaskManager.defineTask`-registered headless task to handle it, from
+`expo-task-manager` (new dependency, not yet in `package.json`). Confirm
+exact function/type names against
+https://docs.expo.dev/versions/v57.0.0/sdk/location/ and
+.../sdk/task-manager/ before implementing — this is the intended shape,
+not assumed from general RN knowledge.
+
+**Permission & native config changes:**
+- New "Always" location permission, layered on top of FT-3's existing
+  "When In Use" grant (already required to reach any `(app)` screen via
+  `LocationPermissionGate`) — `getBackgroundPermissionsAsync`/
+  `requestBackgroundPermissionsAsync`. iOS shows its "Upgrade to Always
+  Allow" prompt only once; a denial (or a later downgrade via Settings)
+  routes to the same Settings-deep-link pattern every other permission
+  in this app already uses, not a re-prompt.
+- `app.json`: add the `expo-location` config plugin (not currently
+  listed in `plugins` — today's foreground permission relies only on a
+  manual `infoPlist` string) with `locationAlwaysAndWhenInUsePermission`
+  (new purpose string that must concretely justify background use for
+  App Store review — e.g. "So your family can be alerted when you
+  arrive at or leave a Zone, even when Family Tracker isn't open") and
+  `isIosBackgroundLocationEnabled: true` (adds `UIBackgroundModes:
+  ["location"]`). Consolidate the existing manual
+  `ios.infoPlist.NSLocationWhenInUseUsageDescription` into the plugin's
+  `locationWhenInUsePermission` field instead, so both strings are
+  managed in one place rather than risking drift.
+- New dependency: `expo-task-manager` (`npx expo install`, matches this
+  project's other `~57.0.x`-pinned Expo packages).
+- **Native rebuild required.** Both the plugin config and the new native
+  module change the dev client's compiled binary — a fresh `expo run:ios`
+  / EAS dev-client build is needed before this ticket can run on-device;
+  a Metro-only reload isn't enough. Flagged per this ticket's own
+  constraint, not treated as blocking the design.
+
+**Schema:** None. Reuses FT-13's `geofences`/`geofence_events` tables and
+RLS as-is — the background task inserts through the same
+`authenticated`-role grant/policy (`geofence_events_insert_own`) any
+other client insert already uses.
+
+**Detection & write path:**
+- `features/geofencing/lib/logGeofenceEvent.ts` (new) — the plain,
+  non-hook `geofence_events` insert extracted out of FT-16's
+  `useLogGeofenceEvent.ts` (which now just calls it from its effect).
+  First time this insert is needed from two call sites (a hook and a
+  headless task), so it's pulled out once here rather than duplicated —
+  no other behavior change to FT-16's hook.
+- `features/geofencing/backgroundGeofenceTask.ts` (new) — module-scope
+  `TaskManager.defineTask(BACKGROUND_GEOFENCE_TASK_NAME, ...)`. Must be a
+  top-level side-effect import (the OS can relaunch headless JS and
+  needs the task already defined, whether or not any screen has mounted
+  this session) — imported once from `app/_layout.tsx`, same precedent
+  as FT-15/17's other module-scope registrations there. On each native
+  event: resolves `auth.getSession()` (relies on FT-2's existing
+  AsyncStorage-persisted session — no new auth wiring) for `user_id`,
+  maps the region `identifier` back to a `geofence_id` and
+  `Location.GeofencingEventType.Enter/Exit` to `'enter'/'exit'`, and
+  calls `logGeofenceEvent`. No `geofenceName` resolution needed (not
+  stored on the row); none of FT-16's alert-side name-lookup logic is
+  touched.
+- `features/geofencing/hooks/useBackgroundGeofencePermission.ts` (new) —
+  mirrors `useLocationPermission.ts`'s shape/states
+  (`checking`/`undetermined`/`granted`/`denied`) over the background
+  permission APIs.
+- `features/geofencing/hooks/useBackgroundGeofenceRegistration.ts` (new)
+  — given `activeGroupId`, `geofences`, and background permission
+  status: listens for `AppState` transitions and keeps native region
+  monitoring **exclusively a background-mode thing** —
+  `startGeofencingAsync` on transition to `background` (only if
+  permission is granted and at least one zone exists, capped to
+  `MAX_MONITORED_GEOFENCES` regions, iOS's own system region-monitoring
+  ceiling), `stopGeofencingAsync` on transition back to `active` so
+  FT-16's foreground JS loop is the sole detector while the app is open.
+  Deliberate design choice, not incidental — see edge case 1.
+- `features/map/components/FamilyMap.tsx` (edited) — wires in both new
+  hooks alongside the `geofences`/`activeGroupId` it already fetches;
+  renders a new `BackgroundLocationPermissionBanner` (below the existing
+  notification/geofence-alert banners) whenever permission isn't
+  `granted` and the user has at least one group.
+- `features/geofencing/components/BackgroundLocationPermissionBanner.tsx`
+  (new) — non-blocking banner, mirrors `NotificationPermissionBanner`'s
+  shape but with two copy states: `undetermined` (tap →
+  `requestPermission()`, explains the background-alert benefit) and
+  `denied` (tap → `Linking.openSettings()`).
+- `lib/constants.ts` (edited) — adds `BACKGROUND_GEOFENCE_TASK_NAME` and
+  `MAX_MONITORED_GEOFENCES` (20).
+
+**Edge cases:**
+1. Foreground + background double-detection of the same real crossing —
+   avoided by design (native monitoring only runs while backgrounded; JS
+   detection only runs while foregrounded), not by dedupe. A crossing
+   landing in the exact instant of the `AppState` transition could
+   theoretically be missed by both or double-logged — accepted as a rare
+   timing gap, same tolerance this app already has for GPS-jitter
+   duplicates (FT-13/16/17), not hardened further here.
+2. App force-quit by the user (not just backgrounded) — per Apple's
+   documented behavior, circular region monitoring is one of the few
+   background APIs that survives this; the OS relaunches the app
+   headlessly to run the registered task. This is the ticket's core new
+   capability and the main thing on-device verification needs to prove,
+   since it can't be simulated.
+3. Group has more than `MAX_MONITORED_GEOFENCES` zones — registers only
+   the first 20 (stable order, e.g. by `id`), no proximity-aware
+   prioritization; unlikely at family/household scale, flagged rather
+   than solved.
+4. Permission downgraded from Always back to When-In-Use (or off) via
+   Settings mid-session — the next `AppState` background transition
+   finds `status !== 'granted'` and skips `startGeofencingAsync`; if
+   monitoring was already active, it isn't proactively torn down the
+   moment Settings changes (no way to observe that while foregrounded
+   without polling). Acceptable gap, not solved here.
+5. Session expired/signed out at the moment a background event fires —
+   `auth.getSession()` resolves to no user, the insert is skipped via
+   `logGeofenceEvent`'s existing swallow-and-log posture (unchanged from
+   FT-16).
+6. Zero zones in the active group, or zero groups — nothing registered;
+   the banner still offers the permission ask (useful ahead of the first
+   zone being created), the registration hook just no-ops.
+
+**Out of scope:** any change to FT-16's `useGeofenceDetection`/
+`distance.ts` (unchanged, still the foreground detector) or to FT-17's
+webhook/alert logic (both already react to any `geofence_events` insert
+regardless of source); Android (out of scope for the whole roadmap);
+proximity-aware region prioritization past the 20-region cap; an in-app
+toggle to turn background tracking off independent of iOS Settings; any
+persistent in-app "background tracking active" indicator beyond iOS's
+own system-level location-in-use indicator; historical backfill of
+crossings missed while permission was denied; any general-purpose
+background location broadcast (this is geofence detection only, not a
+background version of `location_history` writes).
+
+**On-device verification — physical device required; the iOS Simulator
+can't reliably simulate region-monitoring callbacks for backgrounded/
+killed apps.** After rebuilding the dev client: (1) grant "Always" via
+the new banner's ask flow; separately verify the denied → Settings path.
+(2) With the app foregrounded, cross a zone boundary — confirm FT-16's
+existing foreground behavior is unaffected. (3) Background the app
+(home/swipe up, not force-quit) outside any zone, then cross a
+boundary — confirm a `geofence_events` row lands (Supabase dashboard)
+and another foregrounded group member gets FT-16's alert and/or FT-17's
+push. (4) Force-quit the app entirely from the app switcher, cross a
+different zone boundary, and confirm a row still lands and the other
+member is still alerted — this is the capability the whole ticket exists
+for. (5) Revoke "Always" via Settings, background again, cross a
+boundary — confirm no new row lands. (6) Re-foreground after a
+background crossing and confirm native monitoring stops (no further
+background rows while foregrounded) and JS detection resumes normally.
+
+**Files touched:**
+- `app.json`
+- `package.json` (new `expo-task-manager` dependency)
+- `lib/constants.ts`
+- `app/_layout.tsx`
+- `features/geofencing/lib/logGeofenceEvent.ts` (new)
+- `features/geofencing/hooks/useLogGeofenceEvent.ts`
+- `features/geofencing/backgroundGeofenceTask.ts` (new)
+- `features/geofencing/hooks/useBackgroundGeofencePermission.ts` (new)
+- `features/geofencing/hooks/useBackgroundGeofenceRegistration.ts` (new)
+- `features/geofencing/components/BackgroundLocationPermissionBanner.tsx` (new)
+- `features/map/components/FamilyMap.tsx`
+
+**Note on parallel dispatch:** shares `features/map/components/FamilyMap.tsx`
+and `lib/constants.ts` with FT-29's file list, but FT-29 is already ✅
+Done — no live conflict today. No other currently-Ready ticket touches
+these files.
 
 ---
 

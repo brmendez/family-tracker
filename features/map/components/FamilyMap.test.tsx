@@ -8,6 +8,8 @@ jest.mock('../../geofencing/hooks/useGeofences');
 jest.mock('../../geofencing/hooks/useGeofenceDetection');
 jest.mock('../../geofencing/hooks/useLogGeofenceEvent');
 jest.mock('../../geofencing/hooks/useGeofenceAlert');
+jest.mock('../../geofencing/hooks/useBackgroundGeofencePermission');
+jest.mock('../../geofencing/hooks/useBackgroundGeofenceRegistration');
 jest.mock('../hooks/useForegroundLocation');
 jest.mock('../hooks/useActiveGroupMembers');
 jest.mock('../hooks/useGroupMemberLocations');
@@ -82,6 +84,8 @@ import { useGeofences } from '../../geofencing/hooks/useGeofences';
 import { useGeofenceDetection } from '../../geofencing/hooks/useGeofenceDetection';
 import { useLogGeofenceEvent } from '../../geofencing/hooks/useLogGeofenceEvent';
 import { useGeofenceAlert } from '../../geofencing/hooks/useGeofenceAlert';
+import { useBackgroundGeofencePermission } from '../../geofencing/hooks/useBackgroundGeofencePermission';
+import { useBackgroundGeofenceRegistration } from '../../geofencing/hooks/useBackgroundGeofenceRegistration';
 import { useForegroundLocation } from '../hooks/useForegroundLocation';
 import { useActiveGroupMembers } from '../hooks/useActiveGroupMembers';
 import { useGroupMemberLocations } from '../hooks/useGroupMemberLocations';
@@ -102,6 +106,12 @@ const mockedUseLogGeofenceEvent = useLogGeofenceEvent as jest.MockedFunction<
 >;
 const mockedUseGeofenceAlert = useGeofenceAlert as jest.MockedFunction<
   typeof useGeofenceAlert
+>;
+const mockedUseBackgroundGeofencePermission = useBackgroundGeofencePermission as jest.MockedFunction<
+  typeof useBackgroundGeofencePermission
+>;
+const mockedUseBackgroundGeofenceRegistration = useBackgroundGeofenceRegistration as jest.MockedFunction<
+  typeof useBackgroundGeofenceRegistration
 >;
 const mockedUseForegroundLocation = useForegroundLocation as jest.MockedFunction<
   typeof useForegroundLocation
@@ -142,6 +152,11 @@ beforeEach(() => {
   });
   mockedUseGeofenceDetection.mockReturnValue({ latestCrossing: null });
   mockedUseGeofenceAlert.mockReturnValue({ visibleAlert: null, dismiss: jest.fn() });
+  mockedUseBackgroundGeofencePermission.mockReturnValue({
+    status: 'granted',
+    requestPermission: jest.fn(),
+  });
+  mockedUseBackgroundGeofenceRegistration.mockReturnValue(undefined);
   mockedUseNotificationsContext.mockReturnValue({
     pushPermissionStatus: 'granted',
   });

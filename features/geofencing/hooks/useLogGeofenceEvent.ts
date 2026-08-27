@@ -1,14 +1,10 @@
 // features/geofencing/hooks/useLogGeofenceEvent.ts
 import { useEffect } from 'react';
 
-import { supabase } from '../../../lib/supabase';
+import { logGeofenceEvent } from '../lib/logGeofenceEvent';
 import type { GeofenceCrossing } from '../types/geofence.types';
 
-/**
- * Inserts one geofence_events row per crossing (self-only, FT-16). Mirrors
- * useLocationHistoryWriter: insert failures are logged and swallowed — a
- * missed event log shouldn't block the map or the alert.
- */
+/** Inserts one geofence_events row per foreground-detected crossing (self-only, FT-16). */
 export const useLogGeofenceEvent = (
   crossing: GeofenceCrossing | null,
   userId: string | null,
@@ -18,19 +14,6 @@ export const useLogGeofenceEvent = (
       return;
     }
 
-    const logEvent = async () => {
-      const { error } = await supabase.from('geofence_events').insert({
-        geofence_id: crossing.geofenceId,
-        user_id: userId,
-        event_type: crossing.eventType,
-        occurred_at: crossing.occurredAt,
-      });
-
-      if (error) {
-        console.warn('[geofence-events] insert failed:', error.message);
-      }
-    };
-
-    logEvent();
+    logGeofenceEvent(crossing, userId);
   }, [crossing, userId]);
 };

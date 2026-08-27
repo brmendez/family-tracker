@@ -8,7 +8,10 @@ import { useAuth } from '../../../context/auth.context';
 import { useGroupsContext } from '../../../context/groups.context';
 import { useNotificationsContext } from '../../../context/notifications.context';
 import { MAP_INITIAL_DELTA } from '../../../lib/constants';
+import { BackgroundLocationPermissionBanner } from '../../geofencing/components/BackgroundLocationPermissionBanner';
 import { GeofenceAlertBanner } from '../../geofencing/components/GeofenceAlertBanner';
+import { useBackgroundGeofencePermission } from '../../geofencing/hooks/useBackgroundGeofencePermission';
+import { useBackgroundGeofenceRegistration } from '../../geofencing/hooks/useBackgroundGeofenceRegistration';
 import { useGeofenceAlert } from '../../geofencing/hooks/useGeofenceAlert';
 import { useGeofenceDetection } from '../../geofencing/hooks/useGeofenceDetection';
 import { useGeofences } from '../../geofencing/hooks/useGeofences';
@@ -35,6 +38,9 @@ import { OtherUserMarker } from './OtherUserMarker';
 // FT-16: foreground-only geofence detection off the coords/geofences
 // already held here; alert is for OTHER members' crossings (realtime),
 // not the crossing user's own — no push (see FT-17/18).
+//
+// FT-18: registers/tears down native background region monitoring off the
+// same geofences, and asks for "Always" permission via a banner.
 export const FamilyMap = () => {
   const router = useRouter();
   const { userId } = useAuth();
@@ -50,6 +56,11 @@ export const FamilyMap = () => {
     activeGroupId ?? undefined,
   );
   const { pushPermissionStatus } = useNotificationsContext();
+  const {
+    status: backgroundLocationStatus,
+    requestPermission: requestBackgroundLocationPermission,
+  } = useBackgroundGeofencePermission();
+  useBackgroundGeofenceRegistration(activeGroupId, geofences, backgroundLocationStatus);
 
   useFocusEffect(
     useCallback(() => {
@@ -140,6 +151,15 @@ export const FamilyMap = () => {
       {visibleAlert ? (
         <View style={styles.bannerWrapper}>
           <GeofenceAlertBanner alert={visibleAlert} onDismiss={dismissGeofenceAlert} />
+        </View>
+      ) : null}
+      {(backgroundLocationStatus === 'undetermined' || backgroundLocationStatus === 'denied') &&
+      groups.length > 0 ? (
+        <View style={styles.bannerWrapper}>
+          <BackgroundLocationPermissionBanner
+            status={backgroundLocationStatus}
+            requestPermission={requestBackgroundLocationPermission}
+          />
         </View>
       ) : null}
       <GroupSwitcher

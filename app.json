@@ -11,7 +11,6 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.anonymous.family-tracker",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "Family Tracker uses your location to show it to your family group on the map.",
         "ITSAppUsesNonExemptEncryption": false
       }
     },
@@ -30,7 +29,15 @@
     "plugins": [
       "expo-router",
       "expo-status-bar",
-      "expo-notifications"
+      "expo-notifications",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "So your family can be alerted when you arrive at or leave a Zone, even when Family Tracker isn't open",
+          "locationWhenInUsePermission": "Family Tracker uses your location to show it to your family group on the map.",
+          "isIosBackgroundLocationEnabled": true
+        }
+      ]
     ],
     "extra": {
       "router": {},

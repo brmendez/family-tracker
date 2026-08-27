@@ -29,3 +29,7 @@ export const GEOFENCE_ALERT_AUTO_DISMISS_MS = 6000;
 // native callout, so cluster and nudge apart by a small display-only offset.
 export const MARKER_OVERLAP_THRESHOLD_M = 20;
 export const MARKER_OFFSET_M = 8;
+
+// FT-18: native region-monitoring task name and iOS's own region cap.
+export const BACKGROUND_GEOFENCE_TASK_NAME = 'background-geofence-task';
+export const MAX_MONITORED_GEOFENCES = 20;

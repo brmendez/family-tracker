@@ -5,6 +5,9 @@ import { StatusBar } from 'expo-status-bar';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { AuthProvider, useAuth } from '../context/auth.context';
+// FT-18: must be imported once so the OS can headlessly relaunch JS and
+// find this task defined, whether or not any screen has mounted this session.
+import '../features/geofencing/backgroundGeofenceTask';
 import { handleNotification } from '../features/notifications/utils/notificationHandler';
 
 // FT-15: Expo's default handler suppresses a push while the app is
