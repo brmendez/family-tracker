@@ -1,9 +1,11 @@
 // features/geofencing/backgroundGeofenceTask.ts
 import { GeofencingEventType, type LocationRegion } from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
+import { AppState } from 'react-native';
 
 import { BACKGROUND_GEOFENCE_TASK_NAME } from '../../lib/constants';
 import { supabase } from '../../lib/supabase';
+import { isWithinRegistrationSuppressWindow } from './lib/geofenceRegistrationTracker';
 import { logGeofenceEvent } from './lib/logGeofenceEvent';
 
 type GeofencingTaskBody = {
@@ -17,6 +19,7 @@ TaskManager.defineTask<GeofencingTaskBody>(
   BACKGROUND_GEOFENCE_TASK_NAME,
   async ({ data, error }) => {
     if (error || !data) {
+      console.warn('[geofencing] background task received error or no data:', error);
       return;
     }
 
@@ -26,6 +29,20 @@ TaskManager.defineTask<GeofencingTaskBody>(
     const geofenceId = region.identifier;
 
     if (!geofenceId) {
+      console.warn('[geofencing] background task region had no identifier:', region);
+      return;
+    }
+
+    // FT-34 Fix 2: foreground JS detector (FT-16/33) already owns this crossing
+    // while the app is open. A headless relaunch has no mounted UI, so
+    // AppState.currentState never reads 'active' there.
+    if (AppState.currentState === 'active') {
+      return;
+    }
+
+    // FT-34 Fix 3: swallow iOS's synchronous initial-membership report, fired
+    // for every region on every real (re-)registration, not just crossings.
+    if (isWithinRegistrationSuppressWindow()) {
       return;
     }
 
@@ -35,8 +52,11 @@ TaskManager.defineTask<GeofencingTaskBody>(
 
     // Signed out at the moment the event fires — nothing to attribute the row to.
     if (!session?.user.id) {
+      console.warn('[geofencing] background task found no session, skipping insert');
       return;
     }
+
+    console.warn('[geofencing] background task firing:', geofenceId, eventType);
 
     await logGeofenceEvent(
       {

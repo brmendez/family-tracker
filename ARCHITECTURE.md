@@ -680,6 +680,7 @@ the solo group, not back to "Family."
 | FT-17 | Push notification to **other group members** on entry/exit (server-triggered webhook) — covers the case where FT-16's in-app alert can't reach them because their app isn't foregrounded | FT-15, FT-16 | ✅ Done |
 | **FT-18** | **Background geofence detection.** Keeps the crossing user's own detection running when the app is backgrounded/closed, via iOS native region monitoring — not a JS watch loop. Requires the "Always" location permission plus background task registration; see FT-18 detail below. | FT-16, FT-17 | ✅ Done |
 | FT-31 | UX polish for `BackgroundLocationPermissionBanner` (FT-18) — flagged during on-device QA (2026-08-27): the banner doesn't read as tappable (no button styling/affordance) and it's not obvious a tap is even required to grant "Always" location. Not a functional bug — background detection itself works — just a discoverability gap. | FT-18 | ⬜ |
+| FT-34 | Bug: `useBackgroundGeofenceRegistration` (FT-18) calls `startGeofencingAsync` fresh on every `background` AppState transition, which makes iOS re-evaluate every region's current membership and fire it as a real enter/exit — confirmed on-device (2026-08-28): 5 separate backgroundings that day each produced a simultaneous exit for every geofence except the occupied one, each insert triggering FT-17's push webhook, spamming other group members with false "left {zone}" alerts. Needs monitoring to stay registered continuously instead of stop/restart per transition, or the background task to suppress the initial per-registration state report. | FT-18, FT-17 | ⬜ |
 
 ### FT-13 detail — Schema: `geofences` + `geofence_events`, group-scoped
 
@@ -1224,6 +1225,42 @@ background rows while foregrounded) and JS detection resumes normally.
 and `lib/constants.ts` with FT-29's file list, but FT-29 is already ✅
 Done — no live conflict today. No other currently-Ready ticket touches
 these files.
+
+---
+
+### FT-34 detail — Fix spurious geofence exit/enter bursts on AppState re-registration
+
+**Type:** Bug
+
+**Why:** `useBackgroundGeofenceRegistration` (FT-18) calls `startGeofencingAsync` on every `background` transition and `stopGeofencingAsync` on every `active` transition. iOS evaluates every registered region's current membership synchronously on `startGeofencingAsync` and delivers it through the same callback as a real crossing — one `exit` per non-occupied zone, one `enter` for the occupied one. Confirmed on-device (2026-08-28, and again 2026-08-31) recurring every few minutes while continuously backgrounded, not just at relaunch, so something is re-triggering the `background` transition more often than a single foreground→background edge explains. Each spurious row fires FT-17's push webhook — active spam to other group members, high severity.
+
+**Likely root cause (verify on-device, not certain at design time):** iOS terminates (not just suspends) backgrounded apps under routine memory pressure, then relaunches them headlessly to service a pending region-monitoring callback. Each relaunch remounts `FamilyMap.tsx` and creates a *new* `AppState` listener with no memory of the app's prior state, so the first `'change'` event it receives — even one just confirming the already-current `background` state — reads as a fresh transition and re-fires `startMonitoring`. Senior dev should correlate device logs (process-launch timestamps vs. burst timestamps) to confirm before assuming this is the sole cause. Fix 1 below is robust to this cause or plain foreground/background flapping (Control Center, lock/unlock) equally — it removes AppState as the registration trigger entirely.
+
+**Fix 1 — decouple registration from AppState (primary, structural):** `useBackgroundGeofenceRegistration` stops listening to `AppState` for registration. Instead, a plain effect keyed on `[permissionStatus, activeGroupId, geofences]` computes a stable signature of the target region set (sorted `id:lat:lng:radiusM`) and calls `startGeofencingAsync` only when that signature differs from the last one actually registered (tracked via the new module below). Monitoring registers once permission/zones are ready and then runs continuously — never stopped on foreground. Re-registration now only happens on a genuine zone add/edit/delete or permission grant, not on every background/foreground flip.
+
+**Fix 2 — preserve "no duplicate foreground detection" without stop/start:** FT-18's original mechanism for keeping native monitoring from firing alongside FT-16/33's foreground JS detector was turning it off while foregrounded. Since Fix 1 keeps it always on, that invariant moves into `backgroundGeofenceTask.ts`: before calling `logGeofenceEvent`, check `AppState.currentState`; if it reads `'active'`, no-op — the foreground detector already owns this crossing. A headless relaunch has no mounted UI, so `AppState.currentState` never reads `'active'` there, so the gate only suppresses writes when the app is genuinely foregrounded. `useGeofenceDetection.ts`/`distance.ts` (FT-16/33) are untouched.
+
+**Fix 3 — suppress the initial-state burst on genuine (re-)registrations:** even a legitimate `startGeofencingAsync` call (first-ever registration, or a real zone-set change) still produces iOS's synchronous initial-membership report for every region. `backgroundGeofenceTask.ts` also checks a "registered at" timestamp (written by the hook immediately after each real `startGeofencingAsync` call) and skips writing for any callback landing within `GEOFENCE_REGISTRATION_SUPPRESS_WINDOW_MS` of that timestamp — treated as an initial-state report, not a crossing, same accepted-imprecision posture as FT-13's other dedupe gaps. In-memory only: a genuine re-registration can only happen while the JS process is alive to call it, so the window and the process share a lifetime.
+
+**New shared module:** `features/geofencing/lib/geofenceRegistrationTracker.ts` (new) — small in-memory module (no React) holding the last-registered signature and timestamp; written by `useBackgroundGeofenceRegistration` on every real `startGeofencingAsync` call, read by `backgroundGeofenceTask.ts` for Fix 3's window check. Needed because the hook and the headless task are separate modules with no other shared state.
+
+**Edge cases:**
+1. Zone added/edited/deleted while backgrounded — picked up by the effect diff on next foreground mount, same pre-existing latency as today, not worse.
+2. App killed and relaunched headlessly for a real crossing — Fix 2's gate correctly falls through to writing (no UI, so `AppState.currentState` never reads `'active'`); Fix 3's window doesn't apply since a pure headless launch never calls `startGeofencingAsync`.
+3. A real crossing lands inside the suppress window right after a genuine zone edit — swallowed (false negative), same class of accepted tradeoff as FT-33; rare relative to the spam this fixes.
+4. Permission downgraded mid-session — unchanged from FT-18's existing edge case #4, not addressed here.
+
+**Out of scope:** any change to `useGeofenceDetection.ts`/`distance.ts` (FT-16/33's foreground detector); FT-33's hysteresis fix itself (separate ticket); any change to `logGeofenceEvent.ts`'s insert shape or `geofence_events`/RLS; historical backfill/cleanup of already-inserted spurious rows (manual one-off, not code); Android.
+
+**On-device verification:** physical device required. Grant "Always," create 2+ zones, background the app while inside one zone; confirm no `geofence_events` rows land for the un-occupied zones. Leave it backgrounded 15-20+ minutes without crossing anything; confirm zero new rows appear. Then cross a boundary while backgrounded; confirm exactly one row lands and one push fires. Foreground and cross a boundary; confirm FT-16's alert fires with no duplicate background-task row/push. Add a new zone while foregrounded; confirm the resulting one-time re-registration doesn't itself produce a spurious burst.
+
+**Files touched:**
+- `features/geofencing/hooks/useBackgroundGeofenceRegistration.ts`
+- `features/geofencing/backgroundGeofenceTask.ts`
+- `features/geofencing/lib/geofenceRegistrationTracker.ts` (new)
+- `lib/constants.ts` (new `GEOFENCE_REGISTRATION_SUPPRESS_WINDOW_MS`)
+
+**No overlap with FT-33:** FT-33's fix lives entirely in `useGeofenceDetection.ts`/`distance.ts` (foreground detector) — zero shared files with this ticket, safe to run in parallel once both are Ready.
 
 ---
 

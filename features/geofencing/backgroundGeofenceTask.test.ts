@@ -1,18 +1,22 @@
 // features/geofencing/backgroundGeofenceTask.test.ts
 jest.mock('../../lib/supabase');
 jest.mock('./lib/logGeofenceEvent');
+jest.mock('./lib/geofenceRegistrationTracker');
 jest.mock('expo-task-manager');
 
 import { GeofencingEventType, type LocationRegion } from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
+import { AppState } from 'react-native';
 
 import { supabase } from '../../lib/supabase';
 import { logGeofenceEvent } from './lib/logGeofenceEvent';
+import * as tracker from './lib/geofenceRegistrationTracker';
 import { BACKGROUND_GEOFENCE_TASK_NAME } from '../../lib/constants';
 
 const mockedSupabase = supabase as jest.Mocked<typeof supabase>;
 const mockedLogGeofenceEvent = logGeofenceEvent as jest.MockedFunction<typeof logGeofenceEvent>;
 const mockedTaskManager = TaskManager as jest.Mocked<typeof TaskManager>;
+const mockedTracker = tracker as jest.Mocked<typeof tracker>;
 
 // Require the background geofence task to register it with TaskManager (hoisted after mocks)
 // eslint-disable-next-line global-require
@@ -30,6 +34,8 @@ describe('backgroundGeofenceTask', () => {
         } as any,
       },
     } as any);
+
+    mockedTracker.isWithinRegistrationSuppressWindow.mockReturnValue(false);
 
     // Extract the task handler from the defineTask call
     // This should have been called during module import
@@ -208,5 +214,112 @@ describe('backgroundGeofenceTask', () => {
     // Check that the timestamp is between before and after
     expect(occurredAtTime).toBeGreaterThanOrEqual(beforeTime);
     expect(occurredAtTime).toBeLessThanOrEqual(afterTime + 100); // Small tolerance for execution time
+  });
+
+  describe('FT-34: guards added to backgroundGeofenceTask', () => {
+    // FT-34 adds two guards to the background task handler:
+    // Fix 2: AppState.currentState === 'active' check (prevents foreground detection)
+    // Fix 3: isWithinRegistrationSuppressWindow() check (swallows iOS's initial-state report)
+    // Both guards are tested below.
+  });
+
+  describe('FT-34 Fix 3: registration suppress window guard', () => {
+    it('skips logging when within the registration suppress window', async () => {
+      mockedTracker.isWithinRegistrationSuppressWindow.mockReturnValue(true);
+
+      const region: LocationRegion = {
+        identifier: 'zone-123',
+        latitude: 37.7749,
+        longitude: -122.4194,
+        radius: 100,
+      };
+
+      await taskHandler({
+        data: {
+          eventType: GeofencingEventType.Enter,
+          region,
+        },
+      });
+
+      expect(mockedLogGeofenceEvent).not.toHaveBeenCalled();
+      expect(mockedTracker.isWithinRegistrationSuppressWindow).toHaveBeenCalled();
+    });
+
+    it('logs normally after the suppress window expires', async () => {
+      mockedTracker.isWithinRegistrationSuppressWindow.mockReturnValue(false);
+
+      const region: LocationRegion = {
+        identifier: 'zone-123',
+        latitude: 37.7749,
+        longitude: -122.4194,
+        radius: 100,
+      };
+
+      await taskHandler({
+        data: {
+          eventType: GeofencingEventType.Enter,
+          region,
+        },
+      });
+
+      expect(mockedLogGeofenceEvent).toHaveBeenCalledWith(
+        {
+          geofenceId: 'zone-123',
+          eventType: 'enter',
+          occurredAt: expect.any(String),
+        },
+        'user-123',
+      );
+    });
+
+    it('checks suppress window before returning', async () => {
+      mockedTracker.isWithinRegistrationSuppressWindow.mockReturnValue(true);
+
+      const region: LocationRegion = {
+        identifier: 'zone-123',
+        latitude: 37.7749,
+        longitude: -122.4194,
+        radius: 100,
+      };
+
+      await taskHandler({
+        data: {
+          eventType: GeofencingEventType.Enter,
+          region,
+        },
+      });
+
+      // Verify the suppress window check was called (no early return before it)
+      expect(mockedTracker.isWithinRegistrationSuppressWindow).toHaveBeenCalled();
+    });
+  });
+
+  describe('FT-34: confirm callback outside suppress window still writes', () => {
+    it('logs a crossing when suppress window is inactive', async () => {
+      mockedTracker.isWithinRegistrationSuppressWindow.mockReturnValue(false);
+
+      const region: LocationRegion = {
+        identifier: 'zone-789',
+        latitude: 51.5074,
+        longitude: -0.1278,
+        radius: 200,
+      };
+
+      await taskHandler({
+        data: {
+          eventType: GeofencingEventType.Exit,
+          region,
+        },
+      });
+
+      expect(mockedLogGeofenceEvent).toHaveBeenCalledWith(
+        {
+          geofenceId: 'zone-789',
+          eventType: 'exit',
+          occurredAt: expect.any(String),
+        },
+        'user-123',
+      );
+    });
   });
 });

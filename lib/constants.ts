@@ -33,3 +33,9 @@ export const MARKER_OFFSET_M = 8;
 // FT-18: native region-monitoring task name and iOS's own region cap.
 export const BACKGROUND_GEOFENCE_TASK_NAME = 'background-geofence-task';
 export const MAX_MONITORED_GEOFENCES = 20;
+
+// FT-34: window after a real startGeofencingAsync call during which the
+// background task treats a callback as iOS's initial-membership report, not
+// a crossing. A few seconds comfortably covers the native bridge round trip
+// with no meaningful risk of swallowing a genuine crossing that fast.
+export const GEOFENCE_REGISTRATION_SUPPRESS_WINDOW_MS = 5000;

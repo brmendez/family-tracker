@@ -1,312 +1,472 @@
 // features/geofencing/hooks/useBackgroundGeofenceRegistration.test.ts
-import { renderHook, act } from '@testing-library/react-native';
+import { act, renderHook } from '@testing-library/react-native';
 import * as Location from 'expo-location';
-import { AppState } from 'react-native';
 
 import { BACKGROUND_GEOFENCE_TASK_NAME, MAX_MONITORED_GEOFENCES } from '../../../lib/constants';
+import * as tracker from '../lib/geofenceRegistrationTracker';
 import type { Geofence } from '../types/geofence.types';
+import type { BackgroundGeofencePermissionState } from './useBackgroundGeofencePermission';
 import { useBackgroundGeofenceRegistration } from './useBackgroundGeofenceRegistration';
 
 jest.mock('expo-location');
+jest.mock('../lib/geofenceRegistrationTracker');
 
 const mockedLocation = Location as jest.Mocked<typeof Location>;
+const mockedTracker = tracker as jest.Mocked<typeof tracker>;
 
-function createGeofence(id: string, name: string, lat = 37.7749, lng = -122.4194): Geofence {
+function createGeofence(id: string, name: string, lat = 37.7749, lng = -122.4194, radiusM = 100): Geofence {
   return {
     id,
     groupId: 'group-1',
     name,
     latitude: lat,
     longitude: lng,
-    radiusM: 100,
+    radiusM,
     createdBy: 'user-1',
     createdAt: '2024-01-01T00:00:00.000Z',
   };
 }
 
-describe('useBackgroundGeofenceRegistration', () => {
-  let appStateHandler: ((state: any) => void) | null = null;
-  let appStateSubscription: any;
+type RegistrationProps = {
+  activeGroupId: string | null;
+  geofences: Geofence[];
+  permissionStatus: BackgroundGeofencePermissionState;
+};
+
+describe('useBackgroundGeofenceRegistration (FT-34)', () => {
+  let consoleWarnSpy: jest.SpyInstance;
 
   beforeEach(() => {
     jest.clearAllMocks();
-
-    appStateHandler = null;
-    appStateSubscription = { remove: jest.fn() };
-
-    jest.spyOn(AppState, 'addEventListener').mockImplementation((event, handler) => {
-      if (event === 'change') {
-        appStateHandler = handler as any;
-      }
-      return appStateSubscription;
-    });
+    consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
 
     mockedLocation.startGeofencingAsync.mockResolvedValue(undefined);
     mockedLocation.stopGeofencingAsync.mockResolvedValue(undefined);
+    mockedTracker.recordGeofenceRegistration.mockImplementation(() => {});
+    mockedTracker.getLastRegisteredSignature.mockReturnValue(null);
+    mockedTracker.clearGeofenceRegistration.mockImplementation(() => {});
   });
 
   afterEach(() => {
-    jest.restoreAllMocks();
+    consoleWarnSpy.mockRestore();
   });
 
-  it('starts monitoring on transition to background with granted permission', async () => {
-    const geofences = [createGeofence('zone-1', 'Home')];
+  describe('registration on ready state', () => {
+    it('registers when permission is granted, activeGroupId exists, and geofences are present', async () => {
+      const geofences = [createGeofence('zone-1', 'Home')];
 
-    await renderHook(() =>
-      useBackgroundGeofenceRegistration('group-1', geofences, 'granted'),
-    );
+      await act(async () => {
+        renderHook(() => useBackgroundGeofenceRegistration('group-1', geofences, 'granted'));
+      });
 
-    expect(appStateHandler).not.toBeNull();
-
-    await act(async () => {
-      appStateHandler!('background');
+      expect(mockedLocation.startGeofencingAsync).toHaveBeenCalledWith(
+        BACKGROUND_GEOFENCE_TASK_NAME,
+        expect.arrayContaining([
+          expect.objectContaining({
+            identifier: 'zone-1',
+            latitude: 37.7749,
+            longitude: -122.4194,
+            radius: 100,
+          }),
+        ]),
+      );
     });
 
-    expect(mockedLocation.startGeofencingAsync).toHaveBeenCalledWith(
-      BACKGROUND_GEOFENCE_TASK_NAME,
-      expect.arrayContaining([
-        expect.objectContaining({
-          identifier: 'zone-1',
-          latitude: 37.7749,
-          longitude: -122.4194,
-          radius: 100,
-        }),
-      ]),
-    );
-  });
+    it('records the registration signature after successful start', async () => {
+      const geofences = [createGeofence('zone-1', 'Home')];
 
-  it('stops monitoring on transition to active', async () => {
-    const geofences = [createGeofence('zone-1', 'Home')];
+      await act(async () => {
+        renderHook(() => useBackgroundGeofenceRegistration('group-1', geofences, 'granted'));
+      });
 
-    await renderHook(() =>
-      useBackgroundGeofenceRegistration('group-1', geofences, 'granted'),
-    );
-
-    await act(async () => {
-      appStateHandler!('active');
+      expect(mockedTracker.recordGeofenceRegistration).toHaveBeenCalledWith(
+        'zone-1:37.7749:-122.4194:100',
+      );
     });
 
-    expect(mockedLocation.stopGeofencingAsync).toHaveBeenCalledWith(BACKGROUND_GEOFENCE_TASK_NAME);
-  });
+    it('sorts geofences by id for stable signature', async () => {
+      const geofences = [
+        createGeofence('zone-z', 'Z Zone'),
+        createGeofence('zone-a', 'A Zone'),
+        createGeofence('zone-m', 'M Zone'),
+      ];
 
-  it('does not start monitoring if permission is not granted', async () => {
-    const geofences = [createGeofence('zone-1', 'Home')];
+      mockedTracker.getLastRegisteredSignature.mockReturnValue(null);
+      await act(async () => {
+        renderHook(() => useBackgroundGeofenceRegistration('group-1', geofences, 'granted'));
+      });
 
-    await renderHook(() =>
-      useBackgroundGeofenceRegistration('group-1', geofences, 'undetermined'),
-    );
+      const callArgs = mockedLocation.startGeofencingAsync.mock.calls[0][1];
+      const ids = (callArgs as any[]).map((r: any) => r.identifier);
 
-    await act(async () => {
-      appStateHandler!('background');
+      expect(ids).toEqual(['zone-a', 'zone-m', 'zone-z']);
     });
 
-    expect(mockedLocation.startGeofencingAsync).not.toHaveBeenCalled();
-  });
+    it('caps geofences at MAX_MONITORED_GEOFENCES', async () => {
+      const geofences = Array.from({ length: MAX_MONITORED_GEOFENCES + 5 }, (_, i) =>
+        createGeofence(`zone-${String(i).padStart(2, '0')}`, `Zone ${i}`),
+      );
 
-  it('does not start monitoring if activeGroupId is null', async () => {
-    const geofences = [createGeofence('zone-1', 'Home')];
+      await act(async () => {
+        renderHook(() => useBackgroundGeofenceRegistration('group-1', geofences, 'granted'));
+      });
 
-    await renderHook(() =>
-      useBackgroundGeofenceRegistration(null, geofences, 'granted'),
-    );
-
-    await act(async () => {
-      appStateHandler!('background');
+      const callArgs = mockedLocation.startGeofencingAsync.mock.calls[0][1];
+      expect((callArgs as any[]).length).toBe(MAX_MONITORED_GEOFENCES);
     });
-
-    expect(mockedLocation.startGeofencingAsync).not.toHaveBeenCalled();
   });
 
-  it('does not start monitoring if geofences array is empty', async () => {
-    await renderHook(() =>
-      useBackgroundGeofenceRegistration('group-1', [], 'granted'),
-    );
+  describe('skipping re-registration when signature unchanged', () => {
+    it('does not call startGeofencingAsync when signature matches the last registered one', async () => {
+      const geofences = [createGeofence('zone-1', 'Home')];
+      const signature = 'zone-1:37.7749:-122.4194:100';
 
-    await act(async () => {
-      appStateHandler!('background');
+      mockedTracker.getLastRegisteredSignature.mockReturnValue(signature);
+
+      await act(async () => {
+        renderHook(() => useBackgroundGeofenceRegistration('group-1', geofences, 'granted'));
+      });
+
+      expect(mockedLocation.startGeofencingAsync).not.toHaveBeenCalled();
     });
-
-    expect(mockedLocation.startGeofencingAsync).not.toHaveBeenCalled();
   });
 
-  it('selects the first MAX_MONITORED_GEOFENCES geofences sorted by id, not an arbitrary slice', async () => {
-    // Create geofences in reverse ID order to test sorting
-    const geofences = [
-      createGeofence('zone-z', 'Z Zone'),
-      createGeofence('zone-y', 'Y Zone'),
-      createGeofence('zone-x', 'X Zone'),
-      createGeofence('zone-w', 'W Zone'),
-      createGeofence('zone-v', 'V Zone'),
-      createGeofence('zone-u', 'U Zone'),
-      createGeofence('zone-t', 'T Zone'),
-      createGeofence('zone-s', 'S Zone'),
-      createGeofence('zone-r', 'R Zone'),
-      createGeofence('zone-q', 'Q Zone'),
-      createGeofence('zone-p', 'P Zone'),
-      createGeofence('zone-o', 'O Zone'),
-      createGeofence('zone-n', 'N Zone'),
-      createGeofence('zone-m', 'M Zone'),
-      createGeofence('zone-l', 'L Zone'),
-      createGeofence('zone-k', 'K Zone'),
-      createGeofence('zone-j', 'J Zone'),
-      createGeofence('zone-i', 'I Zone'),
-      createGeofence('zone-h', 'H Zone'),
-      createGeofence('zone-g', 'G Zone'),
-      createGeofence('zone-f', 'F Zone'),
-      createGeofence('zone-e', 'E Zone'),
-      createGeofence('zone-d', 'D Zone'),
-      createGeofence('zone-c', 'C Zone'),
-      createGeofence('zone-b', 'B Zone'),
-      createGeofence('zone-a', 'A Zone'),
-    ];
+  describe('re-registration on changed state', () => {
+    it('re-registers when geofences change and signature differs', async () => {
+      mockedTracker.getLastRegisteredSignature.mockReturnValue(null);
 
-    await renderHook(() =>
-      useBackgroundGeofenceRegistration('group-1', geofences, 'granted'),
-    );
-
-    await act(async () => {
-      appStateHandler!('background');
-    });
-
-    const callArgs = mockedLocation.startGeofencingAsync.mock.calls[0];
-    const regions = callArgs[1] as Array<{ identifier: string }>;
-
-    const registeredIds = regions.map(r => r.identifier);
-
-    // Should be a-t (first 20 when sorted)
-    const expected = [
-      'zone-a',
-      'zone-b',
-      'zone-c',
-      'zone-d',
-      'zone-e',
-      'zone-f',
-      'zone-g',
-      'zone-h',
-      'zone-i',
-      'zone-j',
-      'zone-k',
-      'zone-l',
-      'zone-m',
-      'zone-n',
-      'zone-o',
-      'zone-p',
-      'zone-q',
-      'zone-r',
-      'zone-s',
-      'zone-t',
-    ];
-
-    expect(registeredIds).toHaveLength(MAX_MONITORED_GEOFENCES);
-    expect(registeredIds).toEqual(expected);
-  });
-
-  it('unsubscribes from AppState on unmount', async () => {
-    const geofences = [createGeofence('zone-1', 'Home')];
-
-    const { unmount } = await renderHook(() =>
-      useBackgroundGeofenceRegistration('group-1', geofences, 'granted'),
-    );
-
-    expect(appStateSubscription.remove).not.toHaveBeenCalled();
-
-    await unmount();
-
-    expect(appStateSubscription.remove).toHaveBeenCalled();
-  });
-
-  it('catches and logs startGeofencingAsync errors', async () => {
-    const error = new Error('Geofencing failed');
-    mockedLocation.startGeofencingAsync.mockRejectedValue(error);
-    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
-
-    const geofences = [createGeofence('zone-1', 'Home')];
-
-    await renderHook(() =>
-      useBackgroundGeofenceRegistration('group-1', geofences, 'granted'),
-    );
-
-    await act(async () => {
-      appStateHandler!('background');
-    });
-
-    expect(warnSpy).toHaveBeenCalledWith('[geofencing] startGeofencingAsync failed:', error);
-
-    warnSpy.mockRestore();
-  });
-
-  it('does not throw when stopping geofencing if monitoring was not running', async () => {
-    const geofences = [createGeofence('zone-1', 'Home')];
-
-    mockedLocation.stopGeofencingAsync.mockRejectedValue(new Error('Not running'));
-
-    await renderHook(() =>
-      useBackgroundGeofenceRegistration('group-1', geofences, 'granted'),
-    );
-
-    await act(async () => {
-      appStateHandler!('active');
-    });
-
-    // Should not throw
-    expect(mockedLocation.stopGeofencingAsync).toHaveBeenCalled();
-  });
-
-  it('updates monitoring when geofences change', async () => {
-    const { rerender } = await renderHook(
-      ({ geofences }: { geofences: Geofence[] }) =>
-        useBackgroundGeofenceRegistration('group-1', geofences, 'granted'),
-      {
-        initialProps: {
-          geofences: [createGeofence('zone-1', 'Home')],
+      const { rerender } = await renderHook(
+        (props: RegistrationProps) =>
+          useBackgroundGeofenceRegistration(props.activeGroupId, props.geofences, props.permissionStatus),
+        {
+          initialProps: {
+            activeGroupId: 'group-1',
+            geofences: [createGeofence('zone-1', 'Home')],
+            permissionStatus: 'granted' as const,
+          },
         },
-      },
-    );
+      );
 
-    await act(async () => {
-      appStateHandler!('background');
+      mockedLocation.startGeofencingAsync.mockClear();
+
+      await act(async () => {
+        rerender({
+          activeGroupId: 'group-1',
+          geofences: [
+            createGeofence('zone-1', 'Home'),
+            createGeofence('zone-2', 'Work'),
+          ],
+          permissionStatus: 'granted',
+        });
+      });
+
+      expect(mockedLocation.startGeofencingAsync).toHaveBeenCalled();
     });
 
-    expect(mockedLocation.startGeofencingAsync).toHaveBeenCalledTimes(1);
+    it('re-registers when permission changes from denied to granted', async () => {
+      mockedTracker.getLastRegisteredSignature.mockReturnValue(null);
 
-    await rerender({
-      geofences: [
-        createGeofence('zone-1', 'Home'),
-        createGeofence('zone-2', 'Work'),
-      ],
+      const geofences = [createGeofence('zone-1', 'Home')];
+
+      const { rerender } = await renderHook(
+        (props: RegistrationProps) =>
+          useBackgroundGeofenceRegistration(props.activeGroupId, props.geofences, props.permissionStatus),
+        {
+          initialProps: {
+            activeGroupId: 'group-1',
+            geofences,
+            permissionStatus: 'denied' as const,
+          },
+        },
+      );
+
+      mockedLocation.startGeofencingAsync.mockClear();
+
+      await act(async () => {
+        rerender({
+          activeGroupId: 'group-1',
+          geofences,
+          permissionStatus: 'granted',
+        });
+      });
+
+      expect(mockedLocation.startGeofencingAsync).toHaveBeenCalled();
     });
 
-    // Refs are updated but no additional start call from just ref update
-    expect(mockedLocation.startGeofencingAsync).toHaveBeenCalledTimes(1);
+    it('re-registers when activeGroupId changes', async () => {
+      mockedTracker.getLastRegisteredSignature.mockReturnValue(null);
+
+      const geofences = [createGeofence('zone-1', 'Home')];
+
+      const { rerender } = await renderHook(
+        (props: RegistrationProps) =>
+          useBackgroundGeofenceRegistration(props.activeGroupId, props.geofences, props.permissionStatus),
+        {
+          initialProps: {
+            activeGroupId: 'group-1',
+            geofences,
+            permissionStatus: 'granted' as const,
+          },
+        },
+      );
+
+      mockedLocation.startGeofencingAsync.mockClear();
+
+      await act(async () => {
+        rerender({
+          activeGroupId: 'group-2',
+          geofences,
+          permissionStatus: 'granted',
+        });
+      });
+
+      expect(mockedLocation.startGeofencingAsync).toHaveBeenCalled();
+    });
   });
 
-  it('respects permission status changes via ref', async () => {
-    const { rerender } = await renderHook(
-      ({ permissionStatus }: { permissionStatus: any }) =>
-        useBackgroundGeofenceRegistration('group-1', [createGeofence('zone-1', 'Home')], permissionStatus),
-      {
-        initialProps: {
-          permissionStatus: 'denied' as const,
+  describe('stopping and clearing on zero-state transitions', () => {
+    it('stops and clears when permission changes from granted to denied', async () => {
+      const geofences = [createGeofence('zone-1', 'Home')];
+
+      mockedTracker.getLastRegisteredSignature.mockReturnValue('zone-1:37.7749:-122.4194:100');
+
+      const { rerender } = await renderHook(
+        (props: RegistrationProps) =>
+          useBackgroundGeofenceRegistration(props.activeGroupId, props.geofences, props.permissionStatus),
+        {
+          initialProps: {
+            activeGroupId: 'group-1',
+            geofences,
+            permissionStatus: 'granted' as const,
+          },
         },
-      },
-    );
+      );
 
-    await act(async () => {
-      appStateHandler!('background');
+      await act(async () => {
+        rerender({
+          activeGroupId: 'group-1',
+          geofences,
+          permissionStatus: 'denied',
+        });
+      });
+
+      expect(mockedLocation.stopGeofencingAsync).toHaveBeenCalledWith(BACKGROUND_GEOFENCE_TASK_NAME);
+      expect(mockedTracker.clearGeofenceRegistration).toHaveBeenCalled();
     });
 
-    expect(mockedLocation.startGeofencingAsync).not.toHaveBeenCalled();
+    it('stops and clears when activeGroupId becomes null', async () => {
+      const geofences = [createGeofence('zone-1', 'Home')];
 
-    // Update permission status
-    await rerender({
-      permissionStatus: 'granted',
+      mockedTracker.getLastRegisteredSignature.mockReturnValue('zone-1:37.7749:-122.4194:100');
+
+      const { rerender } = await renderHook(
+        (props: RegistrationProps) =>
+          useBackgroundGeofenceRegistration(props.activeGroupId, props.geofences, props.permissionStatus),
+        {
+          initialProps: {
+            activeGroupId: 'group-1',
+            geofences,
+            permissionStatus: 'granted' as const,
+          },
+        },
+      );
+
+      await act(async () => {
+        rerender({
+          activeGroupId: null,
+          geofences,
+          permissionStatus: 'granted',
+        });
+      });
+
+      expect(mockedLocation.stopGeofencingAsync).toHaveBeenCalledWith(BACKGROUND_GEOFENCE_TASK_NAME);
+      expect(mockedTracker.clearGeofenceRegistration).toHaveBeenCalled();
     });
 
-    await act(async () => {
-      appStateHandler!('background');
+    it('stops and clears when geofences become empty', async () => {
+      mockedTracker.getLastRegisteredSignature.mockReturnValue('zone-1:37.7749:-122.4194:100');
+
+      const { rerender } = await renderHook(
+        (props: RegistrationProps) =>
+          useBackgroundGeofenceRegistration(props.activeGroupId, props.geofences, props.permissionStatus),
+        {
+          initialProps: {
+            activeGroupId: 'group-1',
+            geofences: [createGeofence('zone-1', 'Home')],
+            permissionStatus: 'granted' as const,
+          },
+        },
+      );
+
+      await act(async () => {
+        rerender({
+          activeGroupId: 'group-1',
+          geofences: [],
+          permissionStatus: 'granted',
+        });
+      });
+
+      expect(mockedLocation.stopGeofencingAsync).toHaveBeenCalledWith(BACKGROUND_GEOFENCE_TASK_NAME);
+      expect(mockedTracker.clearGeofenceRegistration).toHaveBeenCalled();
     });
 
-    // Now it should start
-    expect(mockedLocation.startGeofencingAsync).toHaveBeenCalled();
+    it('does not stop if already in zero state (signature is null)', async () => {
+      const geofences = [createGeofence('zone-1', 'Home')];
+
+      mockedTracker.getLastRegisteredSignature.mockReturnValue(null);
+
+      const { rerender } = await renderHook(
+        (props: RegistrationProps) =>
+          useBackgroundGeofenceRegistration(props.activeGroupId, props.geofences, props.permissionStatus),
+        {
+          initialProps: {
+            activeGroupId: 'group-1',
+            geofences,
+            permissionStatus: 'granted' as const,
+          },
+        },
+      );
+
+      mockedLocation.stopGeofencingAsync.mockClear();
+
+      await act(async () => {
+        rerender({
+          activeGroupId: 'group-1',
+          geofences: [],
+          permissionStatus: 'granted',
+        });
+      });
+
+      expect(mockedLocation.stopGeofencingAsync).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('no repeated stop calls on re-renders in zero state', () => {
+    it('does not call stopGeofencingAsync repeatedly when re-rendering with no permission', async () => {
+      const geofences = [createGeofence('zone-1', 'Home')];
+
+      mockedTracker.getLastRegisteredSignature.mockReturnValue(null);
+
+      const { rerender } = await renderHook(
+        (props: RegistrationProps) =>
+          useBackgroundGeofenceRegistration(props.activeGroupId, props.geofences, props.permissionStatus),
+        {
+          initialProps: {
+            activeGroupId: 'group-1',
+            geofences,
+            permissionStatus: 'denied' as const,
+          },
+        },
+      );
+
+      mockedLocation.stopGeofencingAsync.mockClear();
+
+      // Re-render multiple times with the same denied state
+      await act(async () => {
+        rerender({
+          activeGroupId: 'group-1',
+          geofences,
+          permissionStatus: 'denied',
+        });
+        rerender({
+          activeGroupId: 'group-1',
+          geofences,
+          permissionStatus: 'denied',
+        });
+        rerender({
+          activeGroupId: 'group-1',
+          geofences,
+          permissionStatus: 'denied',
+        });
+      });
+
+      expect(mockedLocation.stopGeofencingAsync).not.toHaveBeenCalled();
+    });
+
+    it('does not call stopGeofencingAsync repeatedly when re-rendering with empty geofences', async () => {
+      mockedTracker.getLastRegisteredSignature.mockReturnValue(null);
+
+      const { rerender } = await renderHook(
+        (props: RegistrationProps) =>
+          useBackgroundGeofenceRegistration(props.activeGroupId, props.geofences, props.permissionStatus),
+        {
+          initialProps: {
+            activeGroupId: 'group-1',
+            geofences: [],
+            permissionStatus: 'granted' as const,
+          },
+        },
+      );
+
+      mockedLocation.stopGeofencingAsync.mockClear();
+
+      // Re-render multiple times with empty geofences
+      await act(async () => {
+        rerender({
+          activeGroupId: 'group-1',
+          geofences: [],
+          permissionStatus: 'granted',
+        });
+        rerender({
+          activeGroupId: 'group-1',
+          geofences: [],
+          permissionStatus: 'granted',
+        });
+      });
+
+      expect(mockedLocation.stopGeofencingAsync).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('error handling', () => {
+    it('catches and logs startGeofencingAsync errors', async () => {
+      const error = new Error('Geofencing failed');
+      mockedLocation.startGeofencingAsync.mockRejectedValueOnce(error);
+
+      const geofences = [createGeofence('zone-1', 'Home')];
+
+      await act(async () => {
+        renderHook(() => useBackgroundGeofenceRegistration('group-1', geofences, 'granted'));
+      });
+
+      // Give the promise time to settle
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      expect(consoleWarnSpy).toHaveBeenCalledWith('[geofencing] startGeofencingAsync failed:', error);
+    });
+
+    it('catches and logs stopGeofencingAsync errors', async () => {
+      const error = new Error('Stop failed');
+      mockedLocation.stopGeofencingAsync.mockRejectedValueOnce(error);
+
+      mockedTracker.getLastRegisteredSignature.mockReturnValue('zone-1:37.7749:-122.4194:100');
+
+      const geofences = [createGeofence('zone-1', 'Home')];
+
+      const { rerender } = await renderHook(
+        (props: RegistrationProps) =>
+          useBackgroundGeofenceRegistration(props.activeGroupId, props.geofences, props.permissionStatus),
+        {
+          initialProps: {
+            activeGroupId: 'group-1',
+            geofences,
+            permissionStatus: 'granted' as const,
+          },
+        },
+      );
+
+      await act(async () => {
+        rerender({
+          activeGroupId: 'group-1',
+          geofences,
+          permissionStatus: 'denied',
+        });
+      });
+
+      // Give the promise time to settle
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      expect(consoleWarnSpy).toHaveBeenCalledWith('[geofencing] stopGeofencingAsync failed:', error);
+    });
   });
 });
