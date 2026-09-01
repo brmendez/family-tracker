@@ -13,6 +13,31 @@ tracker, and locked product/architecture decisions.
 - Supabase (auth, Postgres, realtime)
 - Jest + React Native Testing Library
 
+## Development process
+
+This app is built using an AI-orchestrated development workflow that I
+designed and directed end-to-end. My role is project owner: I write the
+detailed specs, make every architectural and product decision, and drive
+the work through a structured pipeline rather than one-shot prompting.
+
+Each feature moves through a fixed set of specialized sub-agents that I
+orchestrate:
+
+- **Architect** — turns a spec into a concrete implementation plan and
+  ticket breakdown, with explicit files-touched lists and dependencies.
+- **Senior developer** — implements a single ticket against that plan.
+- **Code reviewer** — reviews the generated code against the design doc
+  and project standards before anything is accepted.
+- **Unit test writer** — adds test coverage once implementation is
+  approved.
+- **QA** — an additional review pass used selectively on features with
+  meaningful UX or edge-case surface.
+
+I review every piece of generated code myself, decide what gets fixed or
+reworked, and own the tradeoffs — nothing ships on a model's say-so. The
+full ticket history, locked decisions, and roadmap are tracked in
+[`ARCHITECTURE.md`](./ARCHITECTURE.md).
+
 ## Running it
 
 Requires a dev build — `react-native-maps` is a native module Expo Go
