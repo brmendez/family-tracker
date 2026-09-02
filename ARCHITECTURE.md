@@ -1274,6 +1274,96 @@ these files.
 | FT-20 | Go invisible to a group (1h/2h/4h/all day = local midnight/indefinite) | FT-19 | ⬜ |
 | FT-21 | Global invisible toggle — separate event-sourced table, checked before per-group logic per #6 | FT-19 | ⬜ |
 
+### FT-19 detail — Schema: `group_visibility_overrides`
+
+**Type:** Chore (schema/RLS only — mirrors FT-13's precedent: pure Postgres foundation, no UI; FT-20 is the first consumer)
+
+**Why:** Decisions #6/#7 require "was this person hidden from this group at time T" to be answerable historically, not just right now — same reasoning that makes `location_history`/`geofence_events` append-only. This ticket lands the table plus RLS layered on FT-12's group-scoped `location_history` policy, so hiding takes effect at the DB layer as soon as a row exists, before FT-20 ships any UI to write one.
+
+**Schema — `group_visibility_overrides`:**
+- `id uuid primary key default gen_random_uuid()`
+- `group_id uuid not null references public.groups(id) on delete cascade`
+- `user_id uuid not null references public.profiles(id) on delete cascade`
+- `event_type text not null check (event_type in ('hide', 'unhide'))` — same naming convention as `geofence_events.event_type`.
+- `expires_at timestamptz null` — only meaningful for a `'hide'` event; null = indefinite. `check (event_type = 'hide' or expires_at is null)` backstops this.
+- `created_at timestamptz not null default now()` — the event's own timestamp; also what FT-23's future "at time T" playback queries will compare against.
+
+Index: `group_visibility_overrides_group_user_created_idx on (group_id, user_id, created_at desc)` — supports the "latest row" lookup both the helper function and FT-20's own-state fetch need.
+
+**Event-sourced derivation ("currently hidden," concretely):** no current-state column anywhere. "Is user U currently hidden from group G" = take the single latest row for `(G, U)` ordered by `created_at desc`; true iff `event_type = 'hide'` and (`expires_at is null` or `expires_at > now()`). A duration-limited hide needs no matching `'unhide'` row to expire — passage of time alone flips the answer back once `expires_at` passes, which is also what makes "was U hidden from G at time T" answerable later by swapping `now()` for `T` in the same predicate. An explicit `'unhide'` row exists only for a user manually ending an indefinite (or early) hide.
+
+**RLS / grants** (new migration `supabase/migrations/0014_group_visibility_overrides.sql`):
+- RLS enabled. `select` granted to `authenticated`; **no `insert`/`update`/`delete` grant** — write access is RPC-only (FT-20's `set_group_visibility`), one consistent write path for every duration instead of a plain-grant/RPC split. Confirmed with Brian 2026-09-02.
+  - `group_visibility_overrides_select_own`: `using (auth.uid() = user_id)` — a user reads their own hide history/current state only; no policy lets one member browse another's. Enforcement of who's hidden from whom happens via `location_history`'s policy below, not by exposing this table.
+- New helper `public.is_hidden_from_group(p_user_id uuid, p_group_id uuid) returns boolean`, `stable`, `security definer`, pinned `search_path` (same hardening as FT-7/FT-12's helpers — needed because it reads rows the caller doesn't own, deliberately bypassing the self-only policy above): implements the derivation.
+- New helper `public.shares_visible_group_with(p_user_id uuid) returns boolean`, `stable`, `security definer`, pinned `search_path` — replaces FT-12's `shares_group_with` at this one call site: true iff there exists a group both `auth.uid()` and `p_user_id` belong to where `not is_hidden_from_group(p_user_id, that group's id)`. `shares_group_with` itself is left in place, unused after this migration but not dropped — removing a function used by one now-replaced policy isn't worth the risk for a ticket that isn't about cleanup.
+- Drops `location_history_select_shared_group_member` (FT-12), recreates as `location_history_select_shared_visible_group_member`: `using (auth.uid() = user_id or public.shares_visible_group_with(user_id))`. Self-clause unchanged and still load-bearing — hiding blocks *other* members' view, never your own.
+
+**Forward note for FT-21 (global toggle, not this ticket):** decision #6 wants a global hidden flag checked before per-group logic. The natural extension is an outer `and not is_globally_hidden(user_id)` clause on this same `location_history` policy — additive to this migration's shape, not a rewrite of it. Flagged so FT-21 doesn't re-derive this policy from scratch.
+
+**Edge cases:**
+1. No override row ever exists for `(G, U)` — `is_hidden_from_group` returns false; matches today's FT-12 behavior for every user until FT-20 ships.
+2. Hide expires mid-session — no write needed to become visible again; the next SELECT/realtime-INSERT evaluation of the policy just re-evaluates `now()`.
+3. Group deleted, or either profile deleted — cascades via FK, consistent with `geofences`/`invites`.
+4. User removed from the group (`group_members` row deleted) but override rows remain — deliberately **not** cascaded off `group_members` (no FK to it); needed so a future "was hidden at time T" stays answerable for a since-departed member, per decision #7.
+5. Rapid duplicate hide/hide or unhide/unhide writes — no dedupe constraint, same accepted posture as `location_history`/`geofence_events`.
+
+**Out of scope:** the write path and any UI (FT-20, entirely — this ticket ships zero way to create a row); FT-21's global-flag table/logic; FT-23's playback redaction logic (consumes this table's history later, not built here).
+
+**Verification (schema-only, no client to run on-device):** apply the migration, then manually insert `'hide'`/`'unhide'` rows (Supabase SQL editor, since no RPC exists yet) and confirm against two accounts sharing a group: (a) with no override row, B sees A's location as before; (b) after inserting a `'hide'` row for A in that group with `expires_at` 5 minutes out, B's next fetch shows A gone; (c) once `expires_at` passes, a fresh fetch shows A visible again with no new row inserted; (d) an indefinite hide (`expires_at` null) stays hidden until an `'unhide'` row lands; (e) A always still sees their own location regardless of any hide row on their account.
+
+**Files touched:**
+- `supabase/migrations/0014_group_visibility_overrides.sql` (new)
+
+---
+
+### FT-20 detail — Go invisible to a group
+
+**Type:** Feature
+
+**Why:** FT-19 landed the table + RLS but nothing can write to it yet. FT-20 adds the toggle: a button scoped to the active group (same context FT-14's "Zones" button and `GroupSwitcher` live in), a duration picker (1h/2h/4h/all day/indefinite), and the one RPC needed to compute a server-side `expires_at` — every duration goes through this same RPC, one write path, not a plain-grant/RPC split. Confirmed with Brian 2026-09-02.
+
+**Entry point:** new icon button on `FamilyMap.tsx`'s control row, alongside `GroupSwitcher`/the Zones button, gated on `activeGroupId != null` (same "no chrome with zero groups" precedent). Reflects current state via `useGroupVisibility(activeGroupId)` — eye vs. eye-slash icon.
+
+**Duration picker:** tapping opens `VisibilityDurationSheet` — local modal state inside `FamilyMap.tsx`, not a route (same reasoning FT-14 used for `MapLocationPicker`/`AddressSearchModal`: no first-class way to return a value from a pushed screen). Options: 1 hour / 2 hours / 4 hours / All day / Until I turn it back on (indefinite). If already hidden for the active group, the sheet instead offers "Visible again now" (unhide).
+
+**Server-side logic** (new migration `supabase/migrations/0015_set_group_visibility_rpc.sql`):
+- `public.set_group_visibility(p_group_id uuid, p_hidden boolean, p_duration_minutes int default null, p_timezone text default null) returns void`, `security definer`: checks `is_group_member(p_group_id)` for `auth.uid()`. If `not p_hidden` → inserts `event_type = 'unhide'`, `expires_at = null`. If `p_hidden` and `p_duration_minutes` given → `expires_at = now() + make_interval(mins => p_duration_minutes)` (60/120/240 for 1h/2h/4h). If `p_hidden` and `p_timezone` given (duration null) → `expires_at` = next local midnight computed from `now() at time zone p_timezone`, converted back to `timestamptz` — the "all day" case. If `p_hidden` with both null → indefinite (`expires_at = null`). Default `PUBLIC` execute grant, same as FT-9/FT-10's RPCs.
+
+**Client scope** (new `features/visibility/` folder):
+- `features/visibility/types/visibility.types.ts` — `VisibilityDuration = '1h' | '2h' | '4h' | 'allDay' | 'indefinite'`; `GroupVisibilityState = { isHidden: boolean; expiresAt: string | null }`.
+- `features/visibility/hooks/useGroupVisibility.ts` — given `activeGroupId`: one query for the caller's own latest override row (RLS-scoped by `group_visibility_overrides_select_own`), derives `GroupVisibilityState` client-side using the same predicate as `is_hidden_from_group` (small, acceptable duplication of one boolean check — not worth a round-trip RPC to read your own already-fetched row). Refetches on screen focus (mirrors `useActiveGroupMembers`). Returns `{ state, loading, refetch }`.
+- `features/visibility/hooks/useSetGroupVisibility.ts` — `{ setVisibility(groupId, duration), setting, setErrorMessage }`. Maps duration → the RPC call (`'1h'/'2h'/'4h'` → `p_duration_minutes`; `'allDay'` → `p_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone`; `'indefinite'` → both null; unhide → `p_hidden: false`). Calls the caller-supplied `refetch` on success (same cross-hook coordination precedent as FT-10/FT-11).
+- `features/visibility/components/VisibilityToggleButton.tsx` — controlled (`isHidden`, `onPress`), icon-only, mirrors the Zones button's placement/style.
+- `features/visibility/components/VisibilityDurationSheet.tsx` — controlled (`visible`, `isHidden`, `onSelectDuration`, `onUnhide`, `onClose`).
+- `features/map/components/FamilyMap.tsx` (edited, additive) — wires both hooks, renders `VisibilityToggleButton` + conditionally `VisibilityDurationSheet`, same additive pattern as FT-14's Zones button.
+
+**How gating actually happens (no client-side filtering code):** once FT-19's RLS exists, hiding takes effect purely at the DB layer — `useGroupMemberLocations` (FT-12) needs no changes. A hidden user's future `location_history` INSERTs simply stop matching `location_history_select_shared_visible_group_member` for blocked viewers, for both the initial query and the realtime INSERT stream (`postgres_changes` honors RLS per subscriber). This ticket adds zero visibility-gating logic to the map/location hooks.
+
+**Confirmed with Brian (2026-09-02) — no "last seen" ghost marker, refetch-timed removal is fine for now:** a hidden user's dot must disappear entirely, not degrade into a stale "last seen X ago" marker like FT-28's staleness display — showing a last-known position after a deliberate hide would leak recent location, defeating the feature's purpose. Removal timing: a viewer who already has the app open keeps seeing the last-rendered marker until their map screen's next focus/refetch — RLS blocks new reads, not already-rendered client state. Brian explicitly accepted this (ship now, revisit "vanish instantly" later if wanted) rather than adding a live push-removal signal, which would be materially larger scope.
+
+**Edge cases:**
+1. Hide, then hide again with a different duration before the first expires — the new row is simply the new latest row; the earlier hide is superseded.
+2. Unhide while no hide is active — allowed (harmless extra row), same tolerance as FT-10's accept-already-member case.
+3. Device timezone changes mid-hide (travel) between setting "all day" and its expiry — `expires_at` was computed once, server-side, from the timezone sent at write time; doesn't recompute later. Accepted.
+4. Hidden from Group A, still sharing Group B with a viewer — viewer keeps seeing them via B unless also hidden from B (`shares_visible_group_with` checks per-group); intended semantics, not a bug.
+5. Sole member of a group hides — no other viewer exists to notice; harmless.
+
+**Out of scope:** FT-21's global toggle (separate table/ticket, checked before this per decision #6); FT-23's playback redaction (reads this table's history later); any push/notification when someone goes invisible; any change to `useGroupMemberLocations`, `useActiveGroupMembers`, or `location_history`'s INSERT policy/grants — a hidden user's own device keeps writing `location_history` normally, only read visibility to others changes.
+
+**On-device verification:** two accounts sharing a group, both foregrounded on the map. From A, open the visibility sheet, choose "1 hour" — confirm A's icon flips to hidden and, on B's next focus of the map, A's marker is gone. From A, tap "Visible again now" — confirm B sees A reappear on next focus. Repeat choosing "All day" — confirm the toggle persists across a force-quit/relaunch of A's app, and confirm (Supabase dashboard) the inserted row's `expires_at` lands at local midnight in the device's actual timezone, not UTC midnight. Confirm A always still sees their own marker while hidden from the group.
+
+**Files touched:**
+- `supabase/migrations/0015_set_group_visibility_rpc.sql` (new)
+- `features/visibility/types/visibility.types.ts` (new)
+- `features/visibility/hooks/useGroupVisibility.ts` (new)
+- `features/visibility/hooks/useSetGroupVisibility.ts` (new)
+- `features/visibility/components/VisibilityToggleButton.tsx` (new)
+- `features/visibility/components/VisibilityDurationSheet.tsx` (new)
+- `features/map/components/FamilyMap.tsx`
+
+**File overlap:** zero shared files with FT-19 (FT-19 touches only its own migration file). `FamilyMap.tsx` is also touched by FT-18 and FT-29, both ✅ Done — no live conflict. No other currently-Ready ticket touches `FamilyMap.tsx`. FT-20 still can't start *before* FT-19 (its only dependency) is Done, but there's no file-overlap blocker once it is.
+
 ---
 
 ## V5 — Journey History / Playback *(blocked by v1's schema AND v2 AND v4 — per #7)*
