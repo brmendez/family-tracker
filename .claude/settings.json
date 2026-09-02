@@ -1,5 +1,6 @@
 {
   "enabledPlugins": {
     "expo@claude-plugins-official": true
-  }
+  },
+  "subagentPromptCacheTtl": "1h"
 }
