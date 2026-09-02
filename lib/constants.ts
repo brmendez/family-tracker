@@ -34,6 +34,11 @@ export const MARKER_OFFSET_M = 8;
 export const BACKGROUND_GEOFENCE_TASK_NAME = 'background-geofence-task';
 export const MAX_MONITORED_GEOFENCES = 20;
 
+// FT-33: reject GPS fixes less precise than this, and require this many
+// consecutive agreeing fixes before treating a state flip as a real crossing.
+export const GEOFENCE_MIN_ACCURACY_M = 50;
+export const GEOFENCE_CONFIRMATION_COUNT = 3;
+
 // FT-34: window after a real startGeofencingAsync call during which the
 // background task treats a callback as iOS's initial-membership report, not
 // a crossing. A few seconds comfortably covers the native bridge round trip
