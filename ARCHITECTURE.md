@@ -1270,7 +1270,7 @@ these files.
 
 | Ticket | Description | Depends on | Status |
 |---|---|---|---|
-| FT-19 | Schema: `group_visibility_overrides` — **event-sourced/append-only** (see locked consequence above), RLS layered on top of FT-12 | FT-12 | ⬜ |
+| FT-19 | Schema: `group_visibility_overrides` — **event-sourced/append-only** (see locked consequence above), RLS layered on top of FT-12 | FT-12 | ✅ Done |
 | FT-20 | Go invisible to a group (1h/2h/4h/all day = local midnight/indefinite) | FT-19 | ⬜ |
 | FT-21 | Global invisible toggle — separate event-sourced table, checked before per-group logic per #6 | FT-19 | ⬜ |
 
