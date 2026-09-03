@@ -46,7 +46,7 @@ lib/
 | 7 | v5 playback scope | Any group member can play back **any other member's** historical route within a shared group — not self-only. Must respect v4's visibility windows *as they were at that historical time*. This means **v5 is blocked by v2 and v4, not just v1's schema.** |
 | 8 | v1 password reset | Out of scope for v1 (2 known users, self-serviceable via Supabase dashboard). In scope starting v2, once groups introduce users outside the household. |
 | 9 | v6 speed/duration thresholds | **Deferred** — revisit when v6 starts. |
-| 11 | Cross-group visibility | **Locked (2026-08-20):** each group's membership is its own independent authorization boundary. Sharing group B with someone still lets them see your location even after you remove them from group A — removal from one group never revokes visibility granted by another shared group. The map's per-group switcher (#4) is a display filter only, not a visibility control; it doesn't affect who can see you. |
+| 11 | Cross-group visibility | **Locked (2026-08-20), amended (2026-09-03) — see FT-38:** each group's membership is its own independent authorization boundary. Sharing group B with someone still lets them see your location even after you remove them from group A — removal from one group never revokes visibility granted by another shared group. **This part is unchanged and still applies to group removal.** It does **not**, however, extend to FT-20/FT-21's temporary hide toggles: confirmed on-device (2026-09-03) that hiding from Group A while still visible via a shared Group B left the viewer able to see you on *both* groups' maps, since `shares_visible_group_with` checks for any mutually shared unhidden group rather than the group actually being viewed. Decided this was not the intended behavior for a per-group hide — "invisible to Group A" should mean invisible on Group A's map specifically, independent of any other group. The map's per-group switcher (#4) remains a display filter only with respect to group *removal*, but per-group *hide* now needs its visibility check scoped to the group being viewed. See FT-38. |
 | 12 | Geofence permissions | **Locked (2026-08-20):** any group member can create a geofence — a non-owner member shouldn't have to ask the owner to add a zone. Only the geofence's creator, or the group owner, can edit/delete it. No admin/co-owner role. |
 
 ## Locked schema consequence (from #6 + #7 combined)
@@ -69,6 +69,8 @@ Answer #7 means "was this person hidden from this group at 3pm last Tuesday" has
 | FT-29 | Bug: overlapping/very-close member markers mis-trigger each other's callout — tapping one pin shows its callout, then ~1s later the other pin's callout also fires. Native MapKit/react-native-maps hit-testing quirk when annotations are close together, not app logic (no custom tap/selection state exists in `OtherUserMarker`/`FamilyMap`). Fix options: cluster close markers (e.g. `react-native-map-clustering`, bigger lift — new dependency, migrates marker rendering) or nudge overlapping coordinates apart by a small deterministic display-only offset (smaller lift — no new dependency, fixes the reported near-overlap case, doesn't scale to many members in the exact same spot). | FT-6 | ✅ Done |
 | FT-30 | Recenter-to-my-location button — crosshair icon on the map screen that animates (if low-lift) or snaps the camera back to the device owner's current location on tap. Nicety now, becomes a necessity as more members/zones clutter the map. | FT-4 | ⬜ |
 | FT-32 | UX polish for `FamilyMap`'s initial load — flagged during on-device QA (2026-08-27): on first open, only your own marker renders; other members' markers and zone pins pop in late once their separate async fetches (`useActiveGroupMembers`, `useGroupMemberLocations`, `useGeofences`) resolve. Expected behavior for now, just a staggered-first-paint UX gap, not a bug. | FT-14, FT-12 | ⬜ |
+| FT-37 | Bug: a member's marker doesn't disappear when they go invisible (per-group or global) while their marker is already on screen — confirmed on-device (2026-09-03) during FT-21 QA. `useGroupMemberLocations` only fetches once on mount and otherwise only appends realtime `INSERT`s; it never refetches on focus and never drops a member whose RLS access was revoked. Only a full app kill+relaunch (fresh mount → fresh RLS-filtered fetch) clears a stale marker. Same gap already existed for FT-20's per-group hide, just not noticed until FT-21 made it more visible. Likely fix: a focus-triggered refetch in `useGroupMemberLocations`, mirroring the `refetchGeofences` pattern `FamilyMap.tsx` already uses. | FT-6 | ⬜ |
+| FT-38 | **PO-prioritized (2026-09-03) — tackle immediately after FT-21's pipeline completes, ahead of lower-numbered backlog tickets (FT-30–37).** Bug/design gap: per-group hide (FT-20) doesn't actually hide you on that group's map if the viewer shares any other unhidden group with you — confirmed on-device (2026-09-03) during FT-21 QA (two users sharing two groups; hiding from one left the hidden user visible on *both* groups' maps). Root cause: `shares_visible_group_with` (FT-19) checks for any mutually shared group where the target isn't hidden, not the specific group the client is currently querying — so it can't express "invisible on Group A's map, still visible on Group B's." See amended decision #11. Needs the visibility check reworked to be scoped to the group actually being viewed (e.g. an RPC/view taking `p_group_id` and checking `is_hidden_from_group` for just that group, replacing the blanket `location_history` SELECT policy's reliance on "any shared group") rather than a blanket per-row grant. Global hide (FT-21) is unaffected — it already gates uniformly regardless of which group is being viewed. | FT-19, FT-20 | ⬜ |
 
 **v1 is done once FT-6 ships** — that's the actual "we see each other" milestone.
 
@@ -1274,7 +1276,7 @@ these files.
 |---|---|---|---|
 | FT-19 | Schema: `group_visibility_overrides` — **event-sourced/append-only** (see locked consequence above), RLS layered on top of FT-12 | FT-12 | ✅ Done |
 | FT-20 | Go invisible to a group (1h/2h/4h/all day = local midnight/indefinite) | FT-19 | ✅ Done |
-| FT-21 | Global invisible toggle — separate event-sourced table, checked before per-group logic per #6 | FT-19 | ⬜ |
+| FT-21 | Global invisible toggle — separate event-sourced table, checked before per-group logic per #6 | FT-19 | ✅ Done |
 
 ### FT-19 detail — Schema: `group_visibility_overrides`
 
@@ -1365,6 +1367,61 @@ Index: `group_visibility_overrides_group_user_created_idx on (group_id, user_id,
 - `features/map/components/FamilyMap.tsx`
 
 **File overlap:** zero shared files with FT-19 (FT-19 touches only its own migration file). `FamilyMap.tsx` is also touched by FT-18 and FT-29, both ✅ Done — no live conflict. No other currently-Ready ticket touches `FamilyMap.tsx`. FT-20 still can't start *before* FT-19 (its only dependency) is Done, but there's no file-overlap blocker once it is.
+
+---
+
+### FT-21 detail — Global invisible toggle
+
+**Type:** Feature
+
+**Why:** Decision #6 wants a single global "invisible to everyone" flag, checked *before* any per-group visibility logic — not a convenience action that fans out a hide write to every group (that would be indistinguishable from per-group hides at the data layer and wouldn't survive someone joining a new group while globally hidden). FT-19 anticipated this exact addition in its own "Forward note for FT-21": an outer `and not is_globally_hidden(user_id)` clause on `location_history`'s existing shared-visible-group policy. FT-21 lands that table, helper, RPC, and a UI entry point, mirroring FT-19+FT-20's combined shape as one ticket instead of two, since the surface is smaller (no group-scoping, no per-group entry point).
+
+**Schema — `global_visibility_overrides`:**
+- `id uuid primary key default gen_random_uuid()`
+- `user_id uuid not null references public.profiles(id) on delete cascade`
+- `event_type text not null check (event_type in ('hide', 'unhide'))`
+- `expires_at timestamptz null` — `check (event_type = 'hide' or expires_at is null)`, same shape as `group_visibility_overrides`.
+- `created_at timestamptz not null default now()`
+
+Index: `global_visibility_overrides_user_created_idx on (user_id, created_at desc)`. Same event-sourced derivation as FT-19: "currently globally hidden" = latest row for `user_id`, true iff `event_type = 'hide'` and (`expires_at is null` or `expires_at > now()`). No FK to any group — this table is intentionally group-agnostic.
+
+**RLS / grants** (new migration `supabase/migrations/0018_global_visibility_overrides.sql`):
+- RLS enabled. `select` to `authenticated`; no `insert`/`update`/`delete` grant — RPC-only write path, same posture as FT-19.
+  - `global_visibility_overrides_select_own`: `using (auth.uid() = user_id)`.
+- New helper `public.is_globally_hidden(p_user_id uuid) returns boolean`, `stable`, `security definer`, pinned `search_path` — same derivation/hardening pattern as `is_hidden_from_group`.
+- Drops `location_history_select_shared_visible_group_member` (FT-19), recreates as `location_history_select_shared_visible_group_member_ungated`: `using (auth.uid() = user_id or (not public.is_globally_hidden(user_id) and public.shares_visible_group_with(user_id)))`. This is the "checked before per-group logic" requirement made concrete: the global check gates the whole per-group clause rather than being layered inside `shares_visible_group_with` itself, so it applies uniformly across every group with no per-group-policy duplication. Self-clause unchanged and still load-bearing — a globally hidden user still always sees their own location.
+- **Where this slots into the RLS chain for future reference (FT-12 → FT-19 → FT-21):** FT-12 established the base shared-group-membership predicate; FT-19 layered per-group hide/unhide on top of it; FT-21 layers one more outer global gate on top of *that*. Any future ticket touching this policy (e.g. FT-23's playback redaction) inherits all three gates by construction if it reuses `is_globally_hidden`/`shares_visible_group_with`/`is_hidden_from_group` rather than re-querying `location_history` directly. Not redesigning FT-12/FT-19's policies here beyond this one additive clause.
+
+**Server-side logic** (new migration `supabase/migrations/0019_set_global_visibility_rpc.sql`):
+- `public.set_global_visibility(p_hidden boolean, p_duration_minutes int default null, p_timezone text default null) returns void`, `security definer`. No membership check needed (self-only action, unlike `set_group_visibility`). Same duration→`expires_at` computation as FT-20's `set_group_visibility` (minutes for 1h/2h/4h, local-midnight via `p_timezone` for "all day," null/null for indefinite, `p_hidden = false` for unhide). Default `PUBLIC` execute grant.
+
+**Client scope** (extends `features/visibility/`, no new component files — `VisibilityToggleButton` and `VisibilityDurationSheet` are already prop-controlled with no `groupId` in their contract, so both are reused unchanged):
+- `features/visibility/types/visibility.types.ts` — add `GlobalVisibilityState = { isHidden: boolean; expiresAt: string | null }` (structurally identical to `GroupVisibilityState`, kept as a separate named type since they're semantically distinct states, not interchangeable).
+- `features/visibility/hooks/useGlobalVisibility.ts` — mirrors `useGroupVisibility.ts` but queries `global_visibility_overrides` with no group filter. Returns `{ state, loading, refetch }`.
+- `features/visibility/hooks/useSetGlobalVisibility.ts` — mirrors `useSetGroupVisibility.ts`, calls `set_global_visibility` (no `p_group_id`). Returns `{ setVisibility(duration), setting, setErrorMessage }`.
+- `features/groups/components/GroupsScreen.tsx` (edited, additive) — new entry point: renders `VisibilityToggleButton` + `VisibilityDurationSheet`, wired to the two new global hooks, placed above the groups list. `GroupsScreen` is the home screen and already hosts FT-15's `NotificationPermissionBanner` as the catch-all surface for app-wide (not group-scoped) controls absent a dedicated Settings screen — same precedent, reused rather than building a new screen for one switch.
+- `FamilyMap.tsx` is **not** touched by this ticket — the global toggle is deliberately not on the map screen, since it's not scoped to `activeGroupId` and putting it next to FT-20's per-group button would visually imply it's another per-group action, which decision #6 explicitly rejects.
+
+**Edge cases:**
+1. No global override row ever exists — `is_globally_hidden` returns false; no behavior change for any existing user until this ships.
+2. Globally hidden while also having an active per-group hide (FT-20) in some group — both are independently true; unhiding globally does **not** touch or clear any `group_visibility_overrides` row, and unhiding a specific group does not touch this table either. Per decision #6, global is a separate flag, not a fan-out write.
+3. Globally hidden, not hidden per-group anywhere — every group's viewers lose visibility uniformly via the outer RLS clause, with zero `group_visibility_overrides` rows written.
+4. Global hide expires mid-session — same as FT-19's per-group case: no write needed, next SELECT/realtime-INSERT re-evaluates `now()`.
+5. User self-view — always sees their own location regardless of global state, same as FT-19/20's per-group self-clause.
+
+**Out of scope:** any UI/logic that writes a `group_visibility_overrides` row when the global toggle changes (explicitly rejected by decision #6); FT-23's playback redaction reading this table's history; a combined "effectively hidden" indicator anywhere in the map UI (not needed — RLS alone gates reads, same "zero client-side filtering" precedent as FT-20); a dedicated Settings screen (reuses `GroupsScreen`, same as FT-15); any change to `group_visibility_overrides`, `set_group_visibility`, or FT-20's client hooks/components beyond reuse.
+
+**On-device verification:** Two accounts sharing two different groups. From A's device, on the Groups screen (not the map), toggle global invisibility "All day." Confirm B's map, on next focus, shows A gone from *both* shared groups. Toggle A back visible; confirm B sees A reappear in both on next focus. Separately, have A hide from only one group via FT-20's per-group toggle (not global), confirm B still sees A in the other shared group. Then have A additionally go globally invisible; confirm B loses A everywhere. Have A turn off *only* the global toggle; confirm B sees A again in the group that was never per-group-hidden, but still not in the one still under an active FT-20 per-group hide. Confirm A always sees their own marker throughout.
+
+**Files touched:**
+- `supabase/migrations/0018_global_visibility_overrides.sql` (new)
+- `supabase/migrations/0019_set_global_visibility_rpc.sql` (new)
+- `features/visibility/types/visibility.types.ts`
+- `features/visibility/hooks/useGlobalVisibility.ts` (new)
+- `features/visibility/hooks/useSetGlobalVisibility.ts` (new)
+- `features/groups/components/GroupsScreen.tsx`
+
+**File overlap:** zero shared files with FT-19 or FT-20 (both touch only their own migrations, `features/visibility/{types,hooks for group-scope},components`, and `FamilyMap.tsx` — none of which FT-21 touches). `GroupsScreen.tsx` was last touched by FT-10/FT-11 (both ✅ Done, pipelined) — no live conflict with any other currently-Ready ticket.
 
 ---
 

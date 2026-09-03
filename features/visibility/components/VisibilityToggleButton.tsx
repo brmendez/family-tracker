@@ -4,6 +4,12 @@ import { Pressable, StyleSheet, Text } from 'react-native';
 type VisibilityToggleButtonProps = {
   isHidden: boolean;
   onPress: () => void;
+  scope?: 'group' | 'global';
+};
+
+const SCOPE_LABEL: Record<'group' | 'global', string> = {
+  group: 'this group',
+  global: 'everyone',
 };
 
 // Text label, not an icon — no icon library (@expo/vector-icons or
@@ -13,11 +19,14 @@ type VisibilityToggleButtonProps = {
 export const VisibilityToggleButton = ({
   isHidden,
   onPress,
+  scope = 'group',
 }: VisibilityToggleButtonProps) => (
   <Pressable
     style={styles.button}
     onPress={onPress}
-    accessibilityLabel={isHidden ? 'Hidden from this group' : 'Visible to this group'}
+    accessibilityLabel={
+      isHidden ? `Hidden from ${SCOPE_LABEL[scope]}` : `Visible to ${SCOPE_LABEL[scope]}`
+    }
   >
     <Text style={styles.buttonText}>{isHidden ? 'Hidden' : 'Visible'}</Text>
   </Pressable>

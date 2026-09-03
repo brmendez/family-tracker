@@ -43,4 +43,30 @@ describe('VisibilityToggleButton', () => {
     const button = screen.getByLabelText('Hidden from this group');
     expect(button).toBeTruthy();
   });
+
+  describe('scope prop', () => {
+    it('uses "this group" language when scope="group" (default)', async () => {
+      const mockOnPress = jest.fn();
+      await render(<VisibilityToggleButton isHidden={false} onPress={mockOnPress} scope="group" />);
+
+      const button = screen.getByLabelText('Visible to this group');
+      expect(button).toBeTruthy();
+    });
+
+    it('uses "everyone" language when scope="global"', async () => {
+      const mockOnPress = jest.fn();
+      await render(<VisibilityToggleButton isHidden={false} onPress={mockOnPress} scope="global" />);
+
+      const button = screen.getByLabelText('Visible to everyone');
+      expect(button).toBeTruthy();
+    });
+
+    it('uses "everyone" language when hidden with scope="global"', async () => {
+      const mockOnPress = jest.fn();
+      await render(<VisibilityToggleButton isHidden={true} onPress={mockOnPress} scope="global" />);
+
+      const button = screen.getByLabelText('Hidden from everyone');
+      expect(button).toBeTruthy();
+    });
+  });
 });

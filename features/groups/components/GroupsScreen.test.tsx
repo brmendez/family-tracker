@@ -5,6 +5,8 @@ jest.mock('../../../context/auth.context');
 jest.mock('../hooks/useGroups');
 jest.mock('../hooks/usePendingInvites');
 jest.mock('../../../context/groups.context');
+jest.mock('../../visibility/hooks/useGlobalVisibility');
+jest.mock('../../visibility/hooks/useSetGlobalVisibility');
 // FT-11: useFocusEffect needs a real NavigationContainer to resolve
 // useNavigation(), which isn't present in these bare component renders.
 // Stub it to just run the effect immediately, like a plain useEffect —
@@ -19,6 +21,8 @@ import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { useGroupsContext } from '../../../context/groups.context';
 import { useGroups } from '../hooks/useGroups';
 import { usePendingInvites } from '../hooks/usePendingInvites';
+import { useGlobalVisibility } from '../../visibility/hooks/useGlobalVisibility';
+import { useSetGlobalVisibility } from '../../visibility/hooks/useSetGlobalVisibility';
 import { GroupsScreen } from './GroupsScreen';
 import type { Group } from '../hooks/useGroups';
 import type { PendingInvite } from '../hooks/usePendingInvites';
@@ -26,6 +30,8 @@ import type { PendingInvite } from '../hooks/usePendingInvites';
 const mockUseGroups = useGroups as jest.MockedFunction<typeof useGroups>;
 const mockUsePendingInvites = usePendingInvites as jest.MockedFunction<typeof usePendingInvites>;
 const mockUseGroupsContext = useGroupsContext as jest.MockedFunction<typeof useGroupsContext>;
+const mockUseGlobalVisibility = useGlobalVisibility as jest.MockedFunction<typeof useGlobalVisibility>;
+const mockUseSetGlobalVisibility = useSetGlobalVisibility as jest.MockedFunction<typeof useSetGlobalVisibility>;
 
 const createMockGroup = (
   id: string = 'group-1',
@@ -94,6 +100,20 @@ describe('GroupsScreen', () => {
       loading: false,
       errorMessage: null,
       refetchGroups: mockRefetchGroups,
+    });
+
+    // FT-21: default global visibility mocks — not visible, no in-flight
+    // requests. These hooks' own behavior is covered by their own test
+    // files; GroupsScreen's tests only need them to render without error.
+    mockUseGlobalVisibility.mockReturnValue({
+      state: { isHidden: false, expiresAt: null },
+      loading: false,
+      refetch: jest.fn().mockResolvedValue(undefined),
+    });
+    mockUseSetGlobalVisibility.mockReturnValue({
+      setVisibility: jest.fn().mockResolvedValue({ error: null }),
+      setting: false,
+      setErrorMessage: null,
     });
   });
 

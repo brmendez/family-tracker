@@ -12,6 +12,11 @@ import {
 } from 'react-native';
 
 import { useGroupsContext } from '../../../context/groups.context';
+import { VisibilityDurationSheet } from '../../visibility/components/VisibilityDurationSheet';
+import { VisibilityToggleButton } from '../../visibility/components/VisibilityToggleButton';
+import { useGlobalVisibility } from '../../visibility/hooks/useGlobalVisibility';
+import { useSetGlobalVisibility } from '../../visibility/hooks/useSetGlobalVisibility';
+import type { VisibilityDuration } from '../../visibility/types/visibility.types';
 import { useGroups } from '../hooks/useGroups';
 import { usePendingInvites } from '../hooks/usePendingInvites';
 import { CreateGroupForm } from './CreateGroupForm';
@@ -55,6 +60,11 @@ import { PendingInvitesSection } from './PendingInvitesSection';
  * activeGroupId source) that would otherwise only learn about a new
  * group on the next full app launch.
  *
+ * FT-21: hosts the global (not group-scoped) invisible toggle above the
+ * groups list — same "catch-all surface for app-wide controls" precedent
+ * as FT-15's NotificationPermissionBanner, reused rather than a dedicated
+ * Settings screen. Reuses VisibilityToggleButton/VisibilityDurationSheet
+ * unchanged, wired to the global (not per-group) hooks.
  */
 export const GroupsScreen = () => {
   const {
@@ -76,6 +86,15 @@ export const GroupsScreen = () => {
   } = usePendingInvites();
 
   const { refetchGroups } = useGroupsContext();
+
+  const { state: globalVisibilityState, refetch: refetchGlobalVisibility } =
+    useGlobalVisibility();
+  const {
+    setVisibility: setGlobalVisibility,
+    setting: settingGlobalVisibility,
+    setErrorMessage: globalVisibilityErrorMessage,
+  } = useSetGlobalVisibility(refetchGlobalVisibility);
+  const [visibilitySheetOpen, setVisibilitySheetOpen] = useState(false);
 
   const router = useRouter();
   const rootRef = useRef<View>(null);
@@ -116,6 +135,22 @@ export const GroupsScreen = () => {
     return { error };
   };
 
+  const handleSelectGlobalVisibilityDuration = async (duration: VisibilityDuration) => {
+    const { error } = await setGlobalVisibility(duration);
+
+    if (!error) {
+      setVisibilitySheetOpen(false);
+    }
+  };
+
+  const handleGlobalUnhide = async () => {
+    const { error } = await setGlobalVisibility('unhide');
+
+    if (!error) {
+      setVisibilitySheetOpen(false);
+    }
+  };
+
   return (
     <View ref={rootRef} style={styles.root} onLayout={handleRootLayout}>
       <KeyboardAvoidingView
@@ -134,6 +169,23 @@ export const GroupsScreen = () => {
             respondErrorMessage={respondErrorMessage}
             respondErrorInviteId={respondErrorInviteId}
           />
+
+          <VisibilityToggleButton
+            isHidden={globalVisibilityState.isHidden}
+            onPress={() => setVisibilitySheetOpen(true)}
+            scope="global"
+          />
+          {visibilitySheetOpen ? (
+            <VisibilityDurationSheet
+              visible={visibilitySheetOpen}
+              isHidden={globalVisibilityState.isHidden}
+              setting={settingGlobalVisibility}
+              errorMessage={globalVisibilityErrorMessage}
+              onSelectDuration={handleSelectGlobalVisibilityDuration}
+              onUnhide={handleGlobalUnhide}
+              onClose={() => setVisibilitySheetOpen(false)}
+            />
+          ) : null}
 
           <View style={styles.listSection}>
             {showInitialSpinner ? (
