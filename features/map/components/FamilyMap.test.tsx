@@ -10,6 +10,8 @@ jest.mock('../../geofencing/hooks/useLogGeofenceEvent');
 jest.mock('../../geofencing/hooks/useGeofenceAlert');
 jest.mock('../../geofencing/hooks/useBackgroundGeofencePermission');
 jest.mock('../../geofencing/hooks/useBackgroundGeofenceRegistration');
+jest.mock('../../visibility/hooks/useGroupVisibility');
+jest.mock('../../visibility/hooks/useSetGroupVisibility');
 jest.mock('../hooks/useForegroundLocation');
 jest.mock('../hooks/useActiveGroupMembers');
 jest.mock('../hooks/useGroupMemberLocations');
@@ -86,6 +88,8 @@ import { useLogGeofenceEvent } from '../../geofencing/hooks/useLogGeofenceEvent'
 import { useGeofenceAlert } from '../../geofencing/hooks/useGeofenceAlert';
 import { useBackgroundGeofencePermission } from '../../geofencing/hooks/useBackgroundGeofencePermission';
 import { useBackgroundGeofenceRegistration } from '../../geofencing/hooks/useBackgroundGeofenceRegistration';
+import { useGroupVisibility } from '../../visibility/hooks/useGroupVisibility';
+import { useSetGroupVisibility } from '../../visibility/hooks/useSetGroupVisibility';
 import { useForegroundLocation } from '../hooks/useForegroundLocation';
 import { useActiveGroupMembers } from '../hooks/useActiveGroupMembers';
 import { useGroupMemberLocations } from '../hooks/useGroupMemberLocations';
@@ -122,6 +126,12 @@ const mockedUseActiveGroupMembers = useActiveGroupMembers as jest.MockedFunction
 const mockedUseGroupMemberLocations = useGroupMemberLocations as jest.MockedFunction<
   typeof useGroupMemberLocations
 >;
+const mockedUseGroupVisibility = useGroupVisibility as jest.MockedFunction<
+  typeof useGroupVisibility
+>;
+const mockedUseSetGroupVisibility = useSetGroupVisibility as jest.MockedFunction<
+  typeof useSetGroupVisibility
+>;
 
 const mockCoords = {
   latitude: 37.7749,
@@ -157,6 +167,16 @@ beforeEach(() => {
     requestPermission: jest.fn(),
   });
   mockedUseBackgroundGeofenceRegistration.mockReturnValue(undefined);
+  mockedUseGroupVisibility.mockReturnValue({
+    state: { isHidden: false, expiresAt: null },
+    loading: false,
+    refetch: jest.fn(),
+  });
+  mockedUseSetGroupVisibility.mockReturnValue({
+    setVisibility: jest.fn().mockResolvedValue({ error: null }),
+    setting: false,
+    setErrorMessage: null,
+  });
   mockedUseNotificationsContext.mockReturnValue({
     pushPermissionStatus: 'granted',
   });
