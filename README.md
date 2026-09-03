@@ -8,6 +8,19 @@ Currently in **v1** (live map between two hardcoded users, no groups yet).
 See [`ARCHITECTURE.md`](./ARCHITECTURE.md) for the full roadmap, ticket
 tracker, and locked product/architecture decisions.
 
+## Features
+
+- **Live map** — see everyone's location update in real-time as they move.
+- **Groups** — organize members into groups (e.g. a household), each with
+  its own map view and invite-by-email membership.
+- **Zones** — define geofenced areas on the map and get alerted when
+  someone enters or exits one, whether their app is open or backgrounded.
+- **Visibility controls** — go invisible to a specific group for a set
+  duration.
+
+Full implementation status and locked product/architecture decisions live
+in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
+
 ## Stack
 - Expo + TypeScript, iOS only
 - Supabase (auth, Postgres, realtime)
