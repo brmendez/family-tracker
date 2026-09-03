@@ -1,0 +1,7 @@
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "gitleaks not found -- install with 'brew install gitleaks' to enable the secret-scan pre-commit check."
+  echo "Refusing to commit without it. Bypass with 'git commit --no-verify' only if you're certain nothing is leaking."
+  exit 1
+fi
+
+gitleaks protect --staged --redact -v
