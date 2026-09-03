@@ -58,7 +58,7 @@ const sendBatch = async (
   tokens: string[],
   content: Pick<SendPushInput, 'title' | 'body' | 'data'>,
 ): Promise<{ tokensToPrune: string[]; receiptIdToToken: Map<string, string> }> => {
-  const messages = tokens.map((token) => ({ to: token, ...content }));
+  const messages = tokens.map((token) => ({ to: token, sound: 'default', ...content }));
 
   const response = await fetch(EXPO_PUSH_SEND_URL, {
     method: 'POST',
