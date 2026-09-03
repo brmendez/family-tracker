@@ -70,7 +70,7 @@ Answer #7 means "was this person hidden from this group at 3pm last Tuesday" has
 | FT-30 | Recenter-to-my-location button — crosshair icon on the map screen that animates (if low-lift) or snaps the camera back to the device owner's current location on tap. Nicety now, becomes a necessity as more members/zones clutter the map. | FT-4 | ⬜ |
 | FT-32 | UX polish for `FamilyMap`'s initial load — flagged during on-device QA (2026-08-27): on first open, only your own marker renders; other members' markers and zone pins pop in late once their separate async fetches (`useActiveGroupMembers`, `useGroupMemberLocations`, `useGeofences`) resolve. Expected behavior for now, just a staggered-first-paint UX gap, not a bug. | FT-14, FT-12 | ⬜ |
 | FT-37 | Bug: a member's marker doesn't disappear when they go invisible (per-group or global) while their marker is already on screen — confirmed on-device (2026-09-03) during FT-21 QA. `useGroupMemberLocations` only fetches once on mount and otherwise only appends realtime `INSERT`s; it never refetches on focus and never drops a member whose RLS access was revoked. Only a full app kill+relaunch (fresh mount → fresh RLS-filtered fetch) clears a stale marker. Same gap already existed for FT-20's per-group hide, just not noticed until FT-21 made it more visible. Likely fix: a focus-triggered refetch in `useGroupMemberLocations`, mirroring the `refetchGeofences` pattern `FamilyMap.tsx` already uses. | FT-6 | ⬜ |
-| FT-38 | **PO-prioritized (2026-09-03) — tackle immediately after FT-21's pipeline completes, ahead of lower-numbered backlog tickets (FT-30–37).** Bug/design gap: per-group hide (FT-20) doesn't actually hide you on that group's map if the viewer shares any other unhidden group with you — confirmed on-device (2026-09-03) during FT-21 QA (two users sharing two groups; hiding from one left the hidden user visible on *both* groups' maps). Root cause: `shares_visible_group_with` (FT-19) checks for any mutually shared group where the target isn't hidden, not the specific group the client is currently querying — so it can't express "invisible on Group A's map, still visible on Group B's." See amended decision #11. Needs the visibility check reworked to be scoped to the group actually being viewed (e.g. an RPC/view taking `p_group_id` and checking `is_hidden_from_group` for just that group, replacing the blanket `location_history` SELECT policy's reliance on "any shared group") rather than a blanket per-row grant. Global hide (FT-21) is unaffected — it already gates uniformly regardless of which group is being viewed. | FT-19, FT-20 | ⬜ |
+| FT-38 | **PO-prioritized (2026-09-03) — tackle immediately after FT-21's pipeline completes, ahead of lower-numbered backlog tickets (FT-30–37).** Bug/design gap: per-group hide (FT-20) doesn't actually hide you on that group's map if the viewer shares any other unhidden group with you — confirmed on-device (2026-09-03) during FT-21 QA (two users sharing two groups; hiding from one left the hidden user visible on *both* groups' maps). Root cause: `shares_visible_group_with` (FT-19) checks for any mutually shared group where the target isn't hidden, not the specific group the client is currently querying — so it can't express "invisible on Group A's map, still visible on Group B's." See amended decision #11. Needs the visibility check reworked to be scoped to the group actually being viewed (e.g. an RPC/view taking `p_group_id` and checking `is_hidden_from_group` for just that group, replacing the blanket `location_history` SELECT policy's reliance on "any shared group") rather than a blanket per-row grant. Global hide (FT-21) is unaffected — it already gates uniformly regardless of which group is being viewed. | FT-19, FT-20 | ✅ Done |
 
 **v1 is done once FT-6 ships** — that's the actual "we see each other" milestone.
 
@@ -1422,6 +1422,41 @@ Index: `global_visibility_overrides_user_created_idx on (user_id, created_at des
 - `features/groups/components/GroupsScreen.tsx`
 
 **File overlap:** zero shared files with FT-19 or FT-20 (both touch only their own migrations, `features/visibility/{types,hooks for group-scope},components`, and `FamilyMap.tsx` — none of which FT-21 touches). `GroupsScreen.tsx` was last touched by FT-10/FT-11 (both ✅ Done, pipelined) — no live conflict with any other currently-Ready ticket.
+
+---
+
+### FT-38 detail — Scope per-group hide to the group being viewed
+
+**Type:** Bug
+
+**Why:** Per amended decision #11, per-group hide (FT-20) must mean "invisible on that group's map specifically," independent of any other shared group — but `shares_visible_group_with` can't express that; it's an OR across every mutually shared unhidden group, not the one group being viewed. Confirmed on-device 2026-09-03.
+
+**Fix shape:** don't touch `location_history`'s RLS — it's still the correct coarse "can ever read this row at all" gate and stays unchanged (decision #11's removal semantics still depend on it). Instead, scope visibility at the group-membership list `useActiveGroupMembers` builds per active group: replace its raw `group_members`+`profiles` join (which has zero visibility awareness today) with a new SECURITY DEFINER RPC that does the join *and* excludes anyone hidden from that specific group or globally hidden. `useGroupMemberLocations` (FT-12) already derives `memberIds` from that output and already ignores realtime INSERTs for ids outside `memberIds` — so correctly scoping the member list alone fixes both the initial fetch and the realtime stream, with no changes to `useGroupMemberLocations.ts`.
+
+**Schema:** no new tables/columns.
+
+**Server-side logic** (new migration `supabase/migrations/0020_group_scoped_member_visibility_rpc.sql`):
+- `public.get_visible_group_members(p_group_id uuid) returns table (user_id uuid, display_name text, avatar_color text)`, SECURITY DEFINER, stable, pinned `search_path`. Checks `is_group_member(p_group_id)` for `auth.uid()` (same guard/error-message pattern as `set_group_visibility`), then returns every other member of `p_group_id` joined to `profiles` where `not is_hidden_from_group(user_id, p_group_id)` and `not is_globally_hidden(user_id)`. Reuses FT-19/FT-21's helpers unchanged — no new predicate logic.
+- Default `PUBLIC` execute grant, matching every other RPC in this project.
+
+**Client scope:**
+- `features/map/hooks/useActiveGroupMembers.ts` (edited) — replaces the raw `.from('group_members').select('profiles(...)')` query with `.rpc('get_visible_group_members', { p_group_id: activeGroupId })`, mapping `{ user_id, display_name, avatar_color }` → the existing `ActiveGroupMember` shape. Hook's public return type and focus-refetch behavior are unchanged.
+- No other client files touched — `useGroupMemberLocations.ts`, `FamilyMap.tsx`, `GroupSwitcher.tsx` all consume `useActiveGroupMembers`'s existing output shape as-is.
+
+**Edge cases:**
+1. Hidden from Group A only, still visible via shared Group B — Group A's member list now excludes them (fixed); Group B's list still includes them (unaffected, correct).
+2. Globally hidden — excluded from every group's member list (RPC checks `is_globally_hidden` too), consistent with FT-21's "checked before per-group logic."
+3. Caller not a member of `p_group_id` — RPC raises, same guard as `set_group_visibility`; not reachable from the UI (`activeGroupId` is always one of the caller's own groups) but defended server-side regardless.
+4. Member unhides mid-session — no live push; next focus refetch of `useActiveGroupMembers` (existing pattern) picks it up, same accepted latency as FT-20's "refetch-timed removal" precedent.
+5. Self is never included (RPC excludes `auth.uid()`), unaffected by any hide state on the caller's own account.
+
+**Out of scope:** any change to `location_history`'s RLS policy or to `shares_visible_group_with`/`is_hidden_from_group`/`is_globally_hidden` (all reused as-is); FT-37's stale-marker-while-still-visible refetch gap (separate ticket, same underlying "no live push" limitation, not solved here); a live/pushed removal signal when someone hides mid-session; any change to `useGroupMemberLocations.ts`, `useGroupVisibility.ts`, or `FamilyMap.tsx`.
+
+**On-device verification:** Two accounts sharing two groups (A and B), both foregrounded. From A's device, open Group A's map (via the switcher), go invisible to Group A only ("1 hour"). On B's device, confirm on next focus: A's marker is gone from Group A's map but still visible on Group B's map after switching. Switch A back visible to Group A; confirm B sees A reappear on Group A's map on next focus. Repeat with A going *globally* invisible instead — confirm B loses A on both groups' maps this time.
+
+**Files touched:**
+- `supabase/migrations/0020_group_scoped_member_visibility_rpc.sql` (new)
+- `features/map/hooks/useActiveGroupMembers.ts`
 
 ---
 
