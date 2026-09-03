@@ -17,25 +17,17 @@ type UseActiveGroupMembersResult = {
   errorMessage: string | null;
 };
 
-type GroupMemberRow = {
-  profiles: {
-    id: string;
-    display_name: string;
-    avatar_color: string | null;
-  } | null;
+type VisibleGroupMemberRow = {
+  user_id: string;
+  display_name: string;
+  avatar_color: string | null;
 };
 
-const toActiveGroupMember = (row: GroupMemberRow): ActiveGroupMember | null => {
-  if (!row.profiles) {
-    return null;
-  }
-
-  return {
-    id: row.profiles.id,
-    displayName: row.profiles.display_name,
-    avatarColor: row.profiles.avatar_color,
-  };
-};
+const toActiveGroupMember = (row: VisibleGroupMemberRow): ActiveGroupMember => ({
+  id: row.user_id,
+  displayName: row.display_name,
+  avatarColor: row.avatar_color,
+});
 
 // Fetches the active group's other members (excluding self). Refetches on
 // screen focus since leave/join changes elsewhere aren't otherwise visible.
@@ -67,11 +59,11 @@ export const useActiveGroupMembers = (
 
     setLoading(true);
 
-    const { data, error } = await supabase
-      .from('group_members')
-      .select('profiles(id, display_name, avatar_color)')
-      .eq('group_id', activeGroupId)
-      .neq('user_id', userId);
+    // FT-38: server-side, scoped to activeGroupId — excludes anyone hidden
+    // from this group or globally, unlike a raw group_members join.
+    const { data, error } = await supabase.rpc('get_visible_group_members', {
+      p_group_id: activeGroupId,
+    });
 
     if (!isMountedRef.current) {
       return;
@@ -84,10 +76,8 @@ export const useActiveGroupMembers = (
       return;
     }
 
-    const rows = (data ?? []) as unknown as GroupMemberRow[];
-    const nextMembers = rows
-      .map(toActiveGroupMember)
-      .filter((member): member is ActiveGroupMember => member !== null);
+    const rows = (data ?? []) as VisibleGroupMemberRow[];
+    const nextMembers = rows.map(toActiveGroupMember);
 
     setMembers(nextMembers);
     setErrorMessage(null);
