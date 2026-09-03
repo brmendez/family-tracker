@@ -17,6 +17,11 @@ import { useGeofenceDetection } from '../../geofencing/hooks/useGeofenceDetectio
 import { useGeofences } from '../../geofencing/hooks/useGeofences';
 import { useLogGeofenceEvent } from '../../geofencing/hooks/useLogGeofenceEvent';
 import { NotificationPermissionBanner } from '../../notifications/components/NotificationPermissionBanner';
+import { VisibilityDurationSheet } from '../../visibility/components/VisibilityDurationSheet';
+import { VisibilityToggleButton } from '../../visibility/components/VisibilityToggleButton';
+import { useGroupVisibility } from '../../visibility/hooks/useGroupVisibility';
+import { useSetGroupVisibility } from '../../visibility/hooks/useSetGroupVisibility';
+import type { VisibilityDuration } from '../../visibility/types/visibility.types';
 import { useActiveGroupMembers } from '../hooks/useActiveGroupMembers';
 import { useDeconflictedMarkerPositions } from '../hooks/useDeconflictedMarkerPositions';
 import { useForegroundLocation } from '../hooks/useForegroundLocation';
@@ -41,6 +46,10 @@ import { OtherUserMarker } from './OtherUserMarker';
 //
 // FT-18: registers/tears down native background region monitoring off the
 // same geofences, and asks for "Always" permission via a banner.
+//
+// FT-20: adds a per-group visibility toggle + duration sheet. Gating
+// itself is 100% RLS (FT-19) — this component writes the override row,
+// nothing here filters markers.
 export const FamilyMap = () => {
   const router = useRouter();
   const { userId } = useAuth();
@@ -55,6 +64,14 @@ export const FamilyMap = () => {
   const { geofences, refetch: refetchGeofences } = useGeofences(
     activeGroupId ?? undefined,
   );
+  const { state: visibilityState, refetch: refetchVisibility } =
+    useGroupVisibility(activeGroupId);
+  const {
+    setVisibility,
+    setting: settingVisibility,
+    setErrorMessage: visibilityErrorMessage,
+  } = useSetGroupVisibility(refetchVisibility);
+  const [visibilitySheetOpen, setVisibilitySheetOpen] = useState(false);
   const { pushPermissionStatus } = useNotificationsContext();
   const {
     status: backgroundLocationStatus,
@@ -67,6 +84,30 @@ export const FamilyMap = () => {
       refetchGeofences();
     }, [refetchGeofences]),
   );
+
+  const handleSelectVisibilityDuration = async (duration: VisibilityDuration) => {
+    if (!activeGroupId) {
+      return;
+    }
+
+    const { error } = await setVisibility(activeGroupId, duration);
+
+    if (!error) {
+      setVisibilitySheetOpen(false);
+    }
+  };
+
+  const handleUnhide = async () => {
+    if (!activeGroupId) {
+      return;
+    }
+
+    const { error } = await setVisibility(activeGroupId, 'unhide');
+
+    if (!error) {
+      setVisibilitySheetOpen(false);
+    }
+  };
 
   useLocationHistoryWriter(coords, timestamp);
 
@@ -175,6 +216,23 @@ export const FamilyMap = () => {
         >
           <Text style={styles.placesButtonText}>Zones</Text>
         </Pressable>
+      ) : null}
+      {activeGroupId ? (
+        <VisibilityToggleButton
+          isHidden={visibilityState.isHidden}
+          onPress={() => setVisibilitySheetOpen(true)}
+        />
+      ) : null}
+      {visibilitySheetOpen ? (
+        <VisibilityDurationSheet
+          visible={visibilitySheetOpen}
+          isHidden={visibilityState.isHidden}
+          setting={settingVisibility}
+          errorMessage={visibilityErrorMessage}
+          onSelectDuration={handleSelectVisibilityDuration}
+          onUnhide={handleUnhide}
+          onClose={() => setVisibilitySheetOpen(false)}
+        />
       ) : null}
       <MapView style={styles.map} initialRegion={initialRegion}>
         <Marker
