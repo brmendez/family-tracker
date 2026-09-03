@@ -43,3 +43,6 @@ coverage/
 # generated native folders
 /ios
 /android
+
+# Supabase CLI cache
+supabase/.temp/
