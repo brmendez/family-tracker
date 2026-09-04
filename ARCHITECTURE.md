@@ -201,6 +201,7 @@ movement, while catching a closed app meaningfully faster than an hour.
 | FT-11 | Leave group (auto-delete on last member per #2) | FT-7 | ✅ Done |
 | FT-12 | Group-scoped location visibility — rewrites `location_history` RLS to require shared group membership; map uses per-group switcher per #4 | FT-6, FT-7 | ✅ Done |
 | FT-24 | Password reset flow (in scope starting here per #8). **Note:** lives in this table for historical reasons (was originally flagged here as `FT-New`) but is a parallel-track auth ticket, not Groups & Membership — depends only on FT-2, unaffected by and doesn't affect v2/v3/v4/v5/v6 sequencing. | FT-2 (auth only — independent of FT-7–12) | ⬜ |
+| FT-39 | Gap: `GroupDetailScreen` never lists the group's members — shows only the group name, invite form, and leave button. Flagged by PO (2026-09-03) while reviewing FT-22's history member selector, which surfaces the full current-member roster but only inside the History screen; nowhere else in the app shows "who's actually in this group." Needs a simple member list added to `GroupDetailScreen` (name per member, owner indicated). | FT-7, FT-8 | ⬜ |
 
 ### FT-9 detail — Invite to group (email-match-at-signup)
 
@@ -1464,8 +1465,74 @@ Index: `global_visibility_overrides_user_created_idx on (user_id, created_at des
 
 | Ticket | Description | Depends on | Status |
 |---|---|---|---|
-| FT-22 | Journey history list, date range picker, member selector (any group member, not just self, per #7) | FT-5, FT-12 | ⬜ |
+| FT-22 | Journey history list (paginated/infinite-scroll, grouped by day — no date-range picker per PO decision 2026-09-03), member selector (any group member, not just self, per #7) | FT-5, FT-12 | ⬜ |
 | FT-23 | Route playback animation — redacts any time range where the viewed member was hidden (global or per-group) at that historical timestamp | FT-22, FT-19, FT-21 | ⬜ |
+
+---
+
+### FT-22 detail — Journey history list, member selector, pagination
+
+**Type:** Feature
+
+**Why:** v1–v4 only ever show live locations. FT-22 is v5's foundation: a read-only, paginated history list for any member of a shared group (decision #7), built on the existing `location_history` schema (FT-5) and RLS (FT-12). No route playback (FT-23, a separate ticket blocked on this one) and no date-range-picker UI — explicitly rejected by the PO in favor of an infinite-scroll, day-grouped list.
+
+**"Journey" definition — locked for this ticket:** a journey is one calendar day's raw `location_history` rows for the selected member (device-local day boundary, same "local midnight" convention as decision #5), not a computed movement/trip segment (contiguous-motion bounded by stationary gaps). FT-5's schema has no stop/start markers, so segment derivation would need a new, PO-unspecified heuristic (a stationary-gap threshold) — real scope creep for a list-only ticket. Day-grouping is also literally what the PO's "grouped by day" ask describes. FT-23 keys playback off `(memberId, dateLocal)` pairs, not a synthetic journey id, matching this.
+
+**Schema:** No new tables/columns/indexes. `location_history` (FT-5) already has everything needed (`user_id, latitude, longitude, recorded_at, speed_mps, heading_deg, accuracy`), and its existing `(user_id, recorded_at desc)` index directly supports the keyset-paginated query below.
+
+**RLS:** No changes. FT-12's `location_history_select_shared_group_member` (`auth.uid() = user_id or shares_group_with(user_id)`) already permits reading any shared-group member's full history — this ticket only adds a read path.
+
+**Server-side logic:** None — plain client `select`, same posture as FT-14's geofence CRUD (grants + RLS only, no RPC for a read).
+
+**Client scope** (new `features/history/` folder, matches the reserved `app/(app)/history/` route):
+- `app/(app)/history/_layout.tsx` (new) — thin Stack, mirrors `app/(app)/places/_layout.tsx`.
+- `app/(app)/history/index.tsx` (new) — thin route → `HistoryScreen`.
+- `app/(app)/_layout.tsx` (edited, additive) — registers `<Stack.Screen name="history" />`.
+- `features/map/components/FamilyMap.tsx` (edited, additive) — new "History" button alongside the existing "Zones" button, `router.push('/history')`.
+- `features/history/components/HistoryScreen.tsx` (new) — composes `MemberSelector` + `JourneyList`, owns selected-member-id state (default: self).
+- `features/history/hooks/useGroupRoster.ts` (new) — given `activeGroupId`, returns every *current* member (self + others), unfiltered by hide state: a plain `group_members` → `profiles` query. Deliberately **not** `useActiveGroupMembers` — that hook excludes anyone currently hidden (FT-38's `get_visible_group_members`), which would silently narrow "any group member" (decision #7); redaction by hide-state is FT-23's job, not this ticket's.
+- `features/history/components/MemberSelector.tsx` (new) — controlled props (`members`, `selectedId`, `onSelect`), same shape as `GroupSwitcher.tsx`.
+- `features/history/hooks/useJourneyHistory.ts` (new) — given `memberId`, keyset-paginated fetch: `{ days: JourneyDay[], loading, loadingMore, errorMessage, hasMore, loadMore }`. Initial page: most recent `JOURNEY_HISTORY_PAGE_ROW_LIMIT` rows ordered `recorded_at desc, id desc` (tie-break for FT-5's known same-instant-duplicate quirk). `loadMore` re-queries `recorded_at < oldestLoaded` (or `= oldest and id <` on a tie), appending. A page landing mid-day merges into that day's existing bucket rather than starting a duplicate one. Resets fully on `memberId` change.
+- `features/history/lib/groupLocationHistoryByDay.ts` (new, pure function — same precedent as FT-29's `deconflictMarkerPositions`): `groupLocationHistoryByDay(rows: LocationHistoryPoint[]): JourneyDay[]`.
+- `features/history/components/JourneyList.tsx` (new) — `FlatList` of day sections, most recent first, `onEndReached` → `loadMore`; end-of-list "beginning of history" state when `!hasMore`.
+- `features/history/types/history.types.ts` (new) — `LocationHistoryPoint`, `JourneyDay`.
+- `lib/constants.ts` (edited) — new `JOURNEY_HISTORY_PAGE_ROW_LIMIT` (recommend 500 — cheap indexed query, comfortably more than a normal day's worth of 5s/10m-interval fixes, so most "load more" taps span several real days).
+
+**Pagination shape — designed for a future jump-to-date (not built here):** cursoring on `recorded_at`, not offset/page-number, means a later "jump to date" only needs to set the initial cursor to that date instead of "now" — no query redesign, just a different starting value into the same `loadMore` path.
+
+**Edge cases:**
+1. Selected member has zero rows ever — empty state, no "load more."
+2. Switching `activeGroupId` while the selected member isn't in the new roster — reset selection to self (mirrors FT-12 edge case #4's full-reset-on-switch).
+3. Query returns fewer than the page limit — `hasMore` false, "beginning of history" end state.
+4. Page boundary lands mid-day — merged into the existing bucket, not a new one.
+5. Two rows sharing an identical `recorded_at` (known FT-5 quirk) — `id` tie-break keeps keyset pagination from skipping/duplicating at a page boundary.
+6. Self always selectable regardless of group membership (RLS's `auth.uid() = user_id` clause).
+
+**Out of scope:**
+- Route playback/animation — FT-23.
+- Date-range-picker UI — rejected; only the cursor shape anticipates a future jump-to-date.
+- Redacting rows by the viewed member's *historical* hidden state — FT-23's job per decision #7; FT-22 only respects *current* group-membership RLS for who can be queried at all.
+- Trip/movement-segment derivation — day-grouping chosen instead.
+- Any change to `location_history` schema, RLS, or grants.
+- Any change to `useActiveGroupMembers.ts`, `useGroupMemberLocations.ts`, or `GroupSwitcher.tsx`.
+
+**On-device verification:** With Accounts A and B sharing a group, B having posted fixes on at least two calendar days: from A's device open History, select B, confirm days render most-recent-first with correct per-day point counts. Scroll to trigger "load more," confirm older days append without duplicating/dropping the boundary day. Switch the selector to "Me" and confirm A's own days render. If testing with 2+ groups, switch active group and confirm the selector's roster updates. Scroll B's history to the true end and confirm "beginning of history" with no further requests.
+
+**Files touched:**
+- `app/(app)/history/_layout.tsx` (new)
+- `app/(app)/history/index.tsx` (new)
+- `app/(app)/_layout.tsx`
+- `features/map/components/FamilyMap.tsx`
+- `features/history/components/HistoryScreen.tsx` (new)
+- `features/history/components/MemberSelector.tsx` (new)
+- `features/history/components/JourneyList.tsx` (new)
+- `features/history/hooks/useGroupRoster.ts` (new)
+- `features/history/hooks/useJourneyHistory.ts` (new)
+- `features/history/lib/groupLocationHistoryByDay.ts` (new)
+- `features/history/types/history.types.ts` (new)
+- `lib/constants.ts`
+
+**Overlap note:** shares nothing with FT-30/FT-31/FT-32/FT-35/FT-36/FT-37's *described* scope, but those are still ⬜ with no architect Files-touched list of their own, so overlap can't be formally confirmed the way FT-29's callout confirmed against FT-17. One soft touch-point to flag: `FamilyMap.tsx` and `app/(app)/_layout.tsx` are both plausible FT-32 (initial-load staggering) touches — don't run FT-22 and FT-32 in parallel without checking FT-32's actual diff once it's architected.
 
 ---
 
@@ -1501,6 +1568,7 @@ Building against **Option A (GPS-derived, no new native dependency)** — do not
 - **Future: avatar markers.** Eventual direction (not yet scoped to a ticket) is for both yourself and other group members to be represented on the map by profile picture, not a generic pin or the native blue dot — closer to a "chat bubble"/Life360-style avatar marker. This affects FT-4/FT-6 implementation choices now: use a plain `Marker` (customizable) for yourself rather than `MapView`'s `showsUserLocation` blue dot, even though the blue dot is simpler today, so the later upgrade to an avatar image is additive rather than a rework. `profiles.avatar_color` already exists as a placeholder for visual identity (FT-2) — a future `avatar_url` column is the natural next step whenever this gets scoped for real.
 - **Place markers need a distinct visual, not just a color swap.** FT-14's main-map integration (piece 5) currently distinguishes place pins from people pins only via `pinColor` (blue vs. default) — at a glance it still reads as "a person," not "a zone/geofence." Same category as the avatar-marker item above: worth a custom marker (icon or shape that signals "place," e.g. a small fence/flag/house glyph) once there's a design pass for map iconography generally. Flagged during FT-14 piece 5 on-device QA (2026-08-21), not blocking.
 - **FT-28's 15-minute staleness threshold is tuned for the current foreground-only reality** (no background location writer exists until FT-18, which is scoped to geofencing only, not general broadcast). If background location tracking is ever broadened beyond FT-18's narrow use case, this threshold should be revisited — a background-tracked app would make "stale" a much rarer, more meaningful signal than it is today.
+- **Future: persistent shape-shifting bottom sheet as the map's main interaction surface.** PO idea (2026-09-03, while discussing FT-22's history UX), not yet scoped to a ticket: a draggable bottom sheet (Apple/Google Maps-style — a peek at the bottom third, drag up toward full screen, dismissible) that's always present on the map screen. Default state holds Zones (FT-14) and possibly other persistent content; tapping a member's marker shape-shifts it into that member's detail/history view (FT-22/23); tapping elsewhere on the map (away from any member) returns it to the default state. This is a real architectural consolidation, not an additive change — Zones and History currently each live as their own separate modal route (`app/(app)/places/`, `app/(app)/history/`), and adopting this pattern later means migrating both into one persistent component driven by selection state, not just adding a new screen. Needs its own design/architecture pass before being scoped into tickets. Not blocking FT-22 or FT-14b — FT-22 shipped as a standalone modal route in the meantime, with an optional `?memberId=` deep-link param on `app/(app)/history/index.tsx` added specifically so a future entry point (marker tap, FT-39's member list) can route into it the same way regardless of which container UI eventually wraps it.
 - **Flaky loading-state tests**: `useSendInvite.test.ts` (FT-9) and `useLeaveGroup.test.ts` (FT-11) both race a real `setTimeout(..., 100)` against `waitFor` to catch a hook's mid-flight loading state — occasionally times out under CPU load in full-suite runs. Not a correctness bug, just test timing. Worth a cleanup pass (deterministic manually-controlled promise instead of a real timer) if it starts causing CI noise. Found during FT-11 verification (2026-08-19).
 - **`GroupSwitcher`'s pill-row styling should become a proper select/dropdown** once a user is likely to belong to more than a handful of groups — a horizontal scrolling pill row (FT-12) doesn't scale well past a few groups. Flagged during FT-12 on-device QA (2026-08-20), not blocking.
 - **"Leave Group" placement on `GroupDetailScreen`** should move to the bottom of the screen, below other actions — standard "dangerous settings sink to the bottom" convention (mirrors iOS Settings apps). Currently sits wherever FT-11 originally placed it. Flagged during FT-14 on-device QA (2026-08-21), pure UI polish, not blocking.
