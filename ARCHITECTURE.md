@@ -1467,6 +1467,7 @@ Index: `global_visibility_overrides_user_created_idx on (user_id, created_at des
 |---|---|---|---|
 | FT-22 | Journey history list (paginated/infinite-scroll, grouped by day — no date-range picker per PO decision 2026-09-03), member selector (any group member, not just self, per #7) | FT-5, FT-12 | ✅ Done |
 | FT-23 | Route playback animation — redacts any time range where the viewed member was hidden (global or per-group) at that historical timestamp | FT-22, FT-19, FT-21 | ⬜ |
+| FT-40 | Bug: FT-22's day list (`useJourneyHistory`) reads `location_history` via a plain client `select`, whose RLS gates on the viewed member's *current* hidden state (FT-19/21), not each row's own timestamp. A currently-hidden member's day list shows "No history yet" for their entire history — including days from before they ever hid — instead of just omitting the hidden window, and blocks the tap-to-playback entry point FT-23 needs for exactly that case. Found by mobile-architect while designing FT-23 (2026-09-04); FT-23 works around it for the playback screen itself via a dedicated RPC, but the list is untouched. Likely fix: give the list the same RPC-based, per-row-timestamp authorization FT-23 uses, replacing reliance on live `location_history` RLS. | FT-22, FT-19, FT-21 | ⬜ |
 
 ---
 
@@ -1533,6 +1534,69 @@ Index: `global_visibility_overrides_user_created_idx on (user_id, created_at des
 - `lib/constants.ts`
 
 **Overlap note:** shares nothing with FT-30/FT-31/FT-32/FT-35/FT-36/FT-37's *described* scope, but those are still ⬜ with no architect Files-touched list of their own, so overlap can't be formally confirmed the way FT-29's callout confirmed against FT-17. One soft touch-point to flag: `FamilyMap.tsx` and `app/(app)/_layout.tsx` are both plausible FT-32 (initial-load staggering) touches — don't run FT-22 and FT-32 in parallel without checking FT-32's actual diff once it's architected.
+
+---
+
+### FT-23 detail — Route playback animation (redacts historical hide windows)
+
+**Type:** Feature
+
+**Why:** FT-22 lists a member's history but never renders it. Per decision #7, any group member can play back any other member's route, but must see it exactly as it looked at the time — a stretch where the viewed member was hidden (globally, FT-21, or from the group being viewed, FT-20/38) must stay redacted in playback even though the member isn't hidden today. FT-19's event-sourced tables already make "hidden at time T" answerable; nothing queries them that way yet.
+
+**Known gap, not fixed here:** `location_history`'s read policy (FT-19/21) gates on the viewed member's *current* hidden state, not each row's own timestamp — so a client-side `select` (what FT-22's `useJourneyHistory` does) returns zero rows at all for a member who is currently hidden, not just their hidden window. FT-23 works around this for the playback screen itself via a dedicated RPC (below), but FT-22's day list is untouched and will still misreport "No history yet" for a currently-hidden member, blocking the tap-to-playback entry point for exactly that case. Logged as FT-40 (see backlog table below) rather than expanding this ticket to also rework FT-22's list query.
+
+**Server-side logic** (new migration `supabase/migrations/0021_journey_playback_rpc.sql`):
+- `public.is_hidden_from_group_at(p_user_id uuid, p_group_id uuid, p_at timestamptz) returns boolean` — `stable`, `security definer`, pinned `search_path`. Same derivation as FT-19's `is_hidden_from_group`, parameterized by `p_at` instead of `now()`: latest `group_visibility_overrides` row for `(p_group_id, p_user_id)` with `created_at <= p_at`, true iff `event_type = 'hide'` and (`expires_at is null` or `expires_at > p_at`).
+- `public.is_globally_hidden_at(p_user_id uuid, p_at timestamptz) returns boolean` — same pattern against `global_visibility_overrides`, mirrors FT-21's `is_globally_hidden`.
+- `public.get_journey_playback_points(p_user_id uuid, p_group_id uuid, p_date_local date, p_timezone text) returns table (id uuid, recorded_at timestamptz, latitude float8, longitude float8, speed_mps float8, heading_deg float8, is_redacted boolean)` — `stable`, `security definer`. If `p_user_id = auth.uid()`, skips authorization/redaction entirely (self always sees full own history, same self-clause precedent as every other visibility policy). Otherwise checks `is_group_member(p_group_id)` for both the caller and `p_user_id` (defense in depth — FT-22's roster only ever offers current members, but this is the actual authorization boundary now, replacing reliance on live `location_history` RLS). Computes the day's UTC range from `p_date_local`/`p_timezone` (same local-midnight convention as decision #5/FT-20), selects that member's `location_history` rows in range ordered by `recorded_at asc`, and for each row sets `is_redacted := is_globally_hidden_at(p_user_id, recorded_at) or is_hidden_from_group_at(p_user_id, p_group_id, recorded_at)`. **Redacted rows have `latitude`/`longitude`/`speed_mps`/`heading_deg` nulled server-side** — the flag alone isn't the privacy boundary, the coordinates themselves never leave the DB for a redacted instant, same posture as RLS never sending a hidden row at all today.
+- No table/RLS/grant changes. Default `PUBLIC` execute grant, same as every other RPC in this project.
+
+**Client scope** (extends `features/history/`):
+- `features/history/types/history.types.ts` (edited, additive only) — new `PlaybackPoint = { id: string; recordedAt: string; latitude: number | null; longitude: number | null; speedMps: number | null; headingDeg: number | null; isRedacted: boolean }` and `RedactedWindow = { startsAt: string; endsAt: string }`. `LocationHistoryPoint`/`JourneyDay` (FT-22) untouched.
+- `features/history/hooks/useJourneyPlayback.ts` (new) — given `(memberId, groupId, dateLocal)`: one call to `get_journey_playback_points` (`p_timezone` from `Intl.DateTimeFormat().resolvedOptions().timeZone`, same pattern as `useSetGroupVisibility`'s "all day"). Returns `{ points: PlaybackPoint[], redactedWindows: RedactedWindow[], loading, errorMessage }`; `redactedWindows` derived via the pure helper below. Resets fully on any param change.
+- `features/history/lib/deriveRedactedWindows.ts` (new, pure function, same "cheaply unit-testable, no React" precedent as `deconflictMarkerPositions.ts`/`groupLocationHistoryByDay.ts`): `deriveRedactedWindows(points: PlaybackPoint[]): RedactedWindow[]` — collapses contiguous runs of `isRedacted` points into windows.
+- `features/history/components/PlaybackMap.tsx` (new) — a dedicated `MapView` + `Polyline` (react-native-maps, already a dependency — no new native module) over just the non-redacted points, plus one animated `Marker` moving along them at a pace proportional to real elapsed time between consecutive visible points, compressed into a fixed `JOURNEY_PLAYBACK_ANIMATION_DURATION_MS` regardless of how long the actual day was. Play/Pause control only. Static "Hidden {start}–{end}" text per `redactedWindow`, shown above/below the map — not a scrubber timeline. **Not `FamilyMap.tsx`** — deliberate: `FamilyMap` bundles live tracking, geofencing, the visibility toggle, and group switching, none of which apply to a static historical day; reusing it would mean threading playback-only state through a component whose entire prop surface assumes "live," a bigger blast radius than building a small new map component from the same `react-native-maps` primitives already in use.
+- `features/history/components/PlaybackScreen.tsx` (new) — reads `memberId`/`dateLocal` from route params, `activeGroupId` from `GroupsContext` (captured once at mount, not reactive to later group switches — this is a pushed modal-stack screen, not persistent like `FamilyMap`), composes `useJourneyPlayback` + `PlaybackMap`. States: loading, error (RPC-raised auth failure → friendly "no longer available" message, same posture as FT-9/10's deleted-group races), "Hidden all day" (every point redacted), normal.
+- `features/history/components/JourneyList.tsx` (edited) — day rows become `Pressable`; new controlled prop `onPressDay: (day: JourneyDay) => void`. No other behavior change.
+- `features/history/components/HistoryScreen.tsx` (edited) — passes `onPressDay` to `JourneyList`, navigating to `/history/playback?memberId={effectiveSelectedId}&date={day.dateLocal}`.
+- `app/(app)/history/playback.tsx` (new) — thin route, reads `memberId`/`date` params → `PlaybackScreen`.
+- `app/(app)/history/_layout.tsx` (edited) — registers `Stack.Screen name="playback"`, title "Playback," same close-button convention as "index."
+- `lib/constants.ts` (edited) — `JOURNEY_PLAYBACK_ANIMATION_DURATION_MS` (recommend 20000 — long enough to visually track a route, short enough not to feel tedious on a busy day; fixed regardless of point count, so playback length stays predictable).
+
+**Edge cases:**
+1. Self playback — never redacted, regardless of any hide state on the caller's own account (RPC's `auth.uid()` bypass).
+2. Entire day redacted (member hidden the whole day) — distinct "Hidden all day" state, not the same empty state as "zero rows ever" (FT-22's own empty state, untouched).
+3. Multiple redacted windows in one day — each contiguous redacted run becomes its own window; no special-casing beyond the generic collapse.
+4. Redacted by both global and per-group simultaneously — boolean OR, one window, no double-counting.
+5. Hide/unhide boundary exactness — inherited unchanged from `is_hidden_from_group`/`is_globally_hidden`'s existing `expires_at` comparison, just evaluated at `recorded_at` instead of `now()`.
+6. Per-group scope — a window hidden from Group A but not Group B (FT-38) redacts only when playback was reached via Group A; switching active group and re-entering the same day via Group B shows that window unredacted. Consistent with decision #11, not solved fresh here.
+7. Target member removed from `p_group_id` between FT-22's list and the playback tap — RPC's membership check fails, friendly error, no crash.
+8. FT-5's known same-`recorded_at` duplicate point — a single fixed-range day fetch, not paginated, so no cursor tie-break is needed here (unlike `useJourneyHistory`); a duplicate instant just contributes a near-zero-duration animation step.
+
+**Out of scope:**
+- Scrub/seek controls or a playback-speed selector — Play/Pause only.
+- Multi-day continuous playback / stitching days together.
+- Export/share of a route.
+- Live "watch it happen now" playback — historical only.
+- FT-22's day-list not surviving a currently-hidden member (see "Known gap" above) — FT-40.
+- Any change to `location_history`'s schema/RLS, `is_hidden_from_group`, `is_globally_hidden`, `shares_visible_group_with`, `get_visible_group_members`, `useJourneyHistory`, or `groupLocationHistoryByDay` — all reused/paralleled unmodified.
+
+**On-device verification:** Two accounts sharing a group. Have B post fixes across a day, going invisible to the shared group (FT-20) for part of that day, then visible again. From A: History → select B → tap that day → confirm the route renders with a visible gap and "Hidden HH:MM–HH:MM" label spanning the hidden window, Play animates the marker along the visible segments and skips the gap, and the day predating any hide/unhide shows a full unredacted route. Repeat with B globally hidden for an entire day (FT-21) → confirm the "Hidden all day" state, no route. Switch active group to a second shared group where B was never hidden during that same window, re-open the same day → confirm that window is now unredacted (per-group scoping, FT-38). Confirm A's own "Me" playback is never redacted regardless of A's own hide state.
+
+**Files touched:**
+- `supabase/migrations/0021_journey_playback_rpc.sql` (new)
+- `features/history/types/history.types.ts`
+- `features/history/hooks/useJourneyPlayback.ts` (new)
+- `features/history/lib/deriveRedactedWindows.ts` (new)
+- `features/history/components/PlaybackMap.tsx` (new)
+- `features/history/components/PlaybackScreen.tsx` (new)
+- `features/history/components/JourneyList.tsx`
+- `features/history/components/HistoryScreen.tsx`
+- `app/(app)/history/playback.tsx` (new)
+- `app/(app)/history/_layout.tsx`
+- `lib/constants.ts`
+
+**File overlap:** no shared files with any other currently ⬜ ticket (FT-30/31/32/35/36/37 touch `FamilyMap.tsx`/`useGroupMemberLocations.ts`/`app/(app)/_layout.tsx`; FT-39 touches `GroupDetailScreen.tsx`; FT-24 touches auth-only files) — safe to run standalone.
 
 ---
 
