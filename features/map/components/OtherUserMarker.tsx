@@ -2,6 +2,7 @@
 import { Marker } from 'react-native-maps';
 
 import { useLocationStaleness } from '../hooks/useLocationStaleness';
+import { deriveActivityState, getActivityLabel } from '../lib/deriveActivityState';
 import type { OtherUserLocation } from '../hooks/useGroupMemberLocations';
 
 type OtherUserMarkerProps = {
@@ -18,12 +19,16 @@ export const OtherUserMarker = ({
   coordinate,
 }: OtherUserMarkerProps) => {
   const { label, isStale } = useLocationStaleness(location.recordedAt);
+  const activityLabel = getActivityLabel(deriveActivityState(location.speedMps));
+  const description = activityLabel
+    ? `Last seen ${label} · ${activityLabel}`
+    : `Last seen ${label}`;
 
   return (
     <Marker
       coordinate={coordinate}
       title={displayName}
-      description={`Last seen ${label}`}
+      description={description}
       accessibilityLabel={`${displayName}'s location`}
       pinColor={isStale ? STALE_PIN_COLOR : undefined}
     />

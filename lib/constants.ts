@@ -54,3 +54,7 @@ export const JOURNEY_HISTORY_PAGE_ROW_LIMIT = 500;
 // real day's span — long enough to visually track a route, short enough
 // not to feel tedious on a busy day.
 export const JOURNEY_PLAYBACK_ANIMATION_DURATION_MS = 20000;
+
+// FT-25: speed_mps thresholds for deriving a rough activity label.
+export const ACTIVITY_STOPPED_MAX_MPS = 0.5;
+export const ACTIVITY_WALKING_MAX_MPS = 3;

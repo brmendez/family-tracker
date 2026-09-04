@@ -22,7 +22,7 @@ const location: OtherUserLocation = {
   latitude: 37.7749,
   longitude: -122.4194,
   recordedAt: '2024-01-01T00:00:00.000Z',
-  speedMps: 2.0,
+  speedMps: null,
   headingDeg: 180,
 };
 
@@ -104,5 +104,65 @@ describe('OtherUserMarker', () => {
         marker.children === undefined ||
         marker.children.length === 0,
     ).toBe(true);
+  });
+
+  it('includes activity label in description when speedMps is driving (>= 3 m/s)', async () => {
+    mockUseLocationStaleness.mockReturnValue({ label: '5 minutes ago', isStale: false });
+
+    const { toJSON } = await render(
+      <OtherUserMarker
+        displayName="Alice"
+        location={{ ...location, speedMps: 5 }}
+        coordinate={{ latitude: location.latitude, longitude: location.longitude }}
+      />,
+    );
+
+    const marker = toJSON() as any;
+    expect(marker.props.description).toBe('Last seen 5 minutes ago · Driving');
+  });
+
+  it('includes activity label in description when speedMps is walking (0.5–3 m/s)', async () => {
+    mockUseLocationStaleness.mockReturnValue({ label: 'just now', isStale: false });
+
+    const { toJSON } = await render(
+      <OtherUserMarker
+        displayName="Bob"
+        location={{ ...location, speedMps: 1.5 }}
+        coordinate={{ latitude: location.latitude, longitude: location.longitude }}
+      />,
+    );
+
+    const marker = toJSON() as any;
+    expect(marker.props.description).toBe('Last seen just now · Walking');
+  });
+
+  it('includes activity label in description when speedMps is stopped (< 0.5 m/s)', async () => {
+    mockUseLocationStaleness.mockReturnValue({ label: '2 hours ago', isStale: true });
+
+    const { toJSON } = await render(
+      <OtherUserMarker
+        displayName="Charlie"
+        location={{ ...location, speedMps: 0.1 }}
+        coordinate={{ latitude: location.latitude, longitude: location.longitude }}
+      />,
+    );
+
+    const marker = toJSON() as any;
+    expect(marker.props.description).toBe('Last seen 2 hours ago · Stopped');
+  });
+
+  it('omits activity label and trailing separator when speedMps is null', async () => {
+    mockUseLocationStaleness.mockReturnValue({ label: '30 minutes ago', isStale: false });
+
+    const { toJSON } = await render(
+      <OtherUserMarker
+        displayName="Diana"
+        location={{ ...location, speedMps: null }}
+        coordinate={{ latitude: location.latitude, longitude: location.longitude }}
+      />,
+    );
+
+    const marker = toJSON() as any;
+    expect(marker.props.description).toBe('Last seen 30 minutes ago');
   });
 });

@@ -1607,9 +1607,9 @@ Building against **Option A (GPS-derived, no new native dependency)** — do not
 
 | Ticket | Description | Depends on | Status |
 |---|---|---|---|
-| FT-25 | Schema: speed/heading columns (likely already present from FT-5) + `activity_alerts` table | FT-5 | ⬜ |
-| FT-26 | Derive/display activity state (stopped/walking/driving) from GPS history | FT-25 | ⬜ |
-| FT-27 | Dangerous-activity flag + notification (reuses FT-15's delivery mechanism). **Thresholds deferred per #9.** | FT-26, FT-15/FT-17 | ⬜ |
+| FT-25 | **Simplified (2026-09-04):** derive activity state (stopped/walking/driving) from the `speed_mps` column already on `location_history` (from FT-5) via fixed thresholds, shown next to the FT-28 staleness label on `OtherUserMarker`. No schema/migration, no `activity_alerts` table — dropped from scope. | FT-5 | ✅ Done |
+| ~~FT-26~~ | Superseded — merged into simplified FT-25 above, not built separately. | — | — |
+| FT-27 | Dangerous-activity flag + notification (reuses FT-15's delivery mechanism). **Thresholds deferred per #9.** | FT-25, FT-15/FT-17 | ⬜ |
 
 ---
 
