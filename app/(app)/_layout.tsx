@@ -27,6 +27,8 @@ import { NotificationsProvider } from '../../context/notifications.context';
  * device's push token registered on first authenticated load. Screens
  * that need pushPermissionStatus (currently GroupsScreen) read it from
  * that context rather than calling the hook again.
+ *
+ * FT-22: adds a "history" modal screen, same shape as "places".
  */
 const AppLayout = () => {
   const router = useRouter();
@@ -51,6 +53,10 @@ const AppLayout = () => {
           <Stack.Screen name="groups" />
           <Stack.Screen
             name="places"
+            options={{ presentation: 'modal', headerShown: false }}
+          />
+          <Stack.Screen
+            name="history"
             options={{ presentation: 'modal', headerShown: false }}
           />
         </Stack>

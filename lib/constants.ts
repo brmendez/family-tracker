@@ -44,3 +44,8 @@ export const GEOFENCE_CONFIRMATION_COUNT = 3;
 // a crossing. A few seconds comfortably covers the native bridge round trip
 // with no meaningful risk of swallowing a genuine crossing that fast.
 export const GEOFENCE_REGISTRATION_SUPPRESS_WINDOW_MS = 5000;
+
+// FT-22: keyset page size for the journey history list — cheap indexed
+// query, comfortably more than a normal day's worth of fixes, so most
+// "load more" taps span several real days.
+export const JOURNEY_HISTORY_PAGE_ROW_LIMIT = 500;

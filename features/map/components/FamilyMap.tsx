@@ -50,6 +50,9 @@ import { OtherUserMarker } from './OtherUserMarker';
 // FT-20: adds a per-group visibility toggle + duration sheet. Gating
 // itself is 100% RLS (FT-19) — this component writes the override row,
 // nothing here filters markers.
+//
+// FT-22: adds a "History" button alongside "Zones", routing to the new
+// journey history list (features/history/).
 export const FamilyMap = () => {
   const router = useRouter();
   const { userId } = useAuth();
@@ -209,13 +212,22 @@ export const FamilyMap = () => {
         onSelect={setActiveGroupId}
       />
       {activeGroupId ? (
-        <Pressable
-          style={styles.placesButton}
-          onPress={() => router.push('/places')}
-          accessibilityLabel="Zones"
-        >
-          <Text style={styles.placesButtonText}>Zones</Text>
-        </Pressable>
+        <View style={styles.mapButtonRow}>
+          <Pressable
+            style={styles.placesButton}
+            onPress={() => router.push('/places')}
+            accessibilityLabel="Zones"
+          >
+            <Text style={styles.placesButtonText}>Zones</Text>
+          </Pressable>
+          <Pressable
+            style={styles.placesButton}
+            onPress={() => router.push('/history')}
+            accessibilityLabel="History"
+          >
+            <Text style={styles.placesButtonText}>History</Text>
+          </Pressable>
+        </View>
       ) : null}
       {activeGroupId ? (
         <VisibilityToggleButton
@@ -307,14 +319,18 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     padding: 8,
   },
+  mapButtonRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
+    marginHorizontal: 12,
+    marginBottom: 8,
+  },
   placesButton: {
-    alignSelf: 'flex-end',
     backgroundColor: '#2563eb',
     borderRadius: 16,
     paddingVertical: 6,
     paddingHorizontal: 14,
-    marginHorizontal: 12,
-    marginBottom: 8,
   },
   placesButtonText: {
     color: '#fff',
