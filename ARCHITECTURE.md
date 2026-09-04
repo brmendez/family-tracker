@@ -1466,7 +1466,7 @@ Index: `global_visibility_overrides_user_created_idx on (user_id, created_at des
 | Ticket | Description | Depends on | Status |
 |---|---|---|---|
 | FT-22 | Journey history list (paginated/infinite-scroll, grouped by day — no date-range picker per PO decision 2026-09-03), member selector (any group member, not just self, per #7) | FT-5, FT-12 | ✅ Done |
-| FT-23 | Route playback animation — redacts any time range where the viewed member was hidden (global or per-group) at that historical timestamp | FT-22, FT-19, FT-21 | ⬜ |
+| FT-23 | Route playback animation — redacts any time range where the viewed member was hidden (global or per-group) at that historical timestamp | FT-22, FT-19, FT-21 | ✅ Done |
 | FT-40 | Bug: FT-22's day list (`useJourneyHistory`) reads `location_history` via a plain client `select`, whose RLS gates on the viewed member's *current* hidden state (FT-19/21), not each row's own timestamp. A currently-hidden member's day list shows "No history yet" for their entire history — including days from before they ever hid — instead of just omitting the hidden window, and blocks the tap-to-playback entry point FT-23 needs for exactly that case. Found by mobile-architect while designing FT-23 (2026-09-04); FT-23 works around it for the playback screen itself via a dedicated RPC, but the list is untouched. Likely fix: give the list the same RPC-based, per-row-timestamp authorization FT-23 uses, replacing reliance on live `location_history` RLS. | FT-22, FT-19, FT-21 | ⬜ |
 
 ---
