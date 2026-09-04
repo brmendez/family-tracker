@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react-native';
+import { fireEvent, render, screen } from '@testing-library/react-native';
 
 import { JourneyList } from './JourneyList';
 import type { JourneyDay } from '../types/history.types';
@@ -13,6 +13,7 @@ describe('JourneyList', () => {
         errorMessage={null}
         hasMore={true}
         onLoadMore={jest.fn()}
+        onPressDay={jest.fn()}
       />,
     );
 
@@ -29,6 +30,7 @@ describe('JourneyList', () => {
         errorMessage="Network error"
         hasMore={true}
         onLoadMore={jest.fn()}
+        onPressDay={jest.fn()}
       />,
     );
 
@@ -44,6 +46,7 @@ describe('JourneyList', () => {
         errorMessage={null}
         hasMore={true}
         onLoadMore={jest.fn()}
+        onPressDay={jest.fn()}
       />,
     );
 
@@ -84,6 +87,7 @@ describe('JourneyList', () => {
         errorMessage={null}
         hasMore={true}
         onLoadMore={jest.fn()}
+        onPressDay={jest.fn()}
       />,
     );
 
@@ -117,6 +121,7 @@ describe('JourneyList', () => {
         errorMessage={null}
         hasMore={true}
         onLoadMore={jest.fn()}
+        onPressDay={jest.fn()}
       />,
     );
 
@@ -149,6 +154,7 @@ describe('JourneyList', () => {
         errorMessage={null}
         hasMore={false}
         onLoadMore={jest.fn()}
+        onPressDay={jest.fn()}
       />,
     );
 
@@ -194,6 +200,7 @@ describe('JourneyList', () => {
         errorMessage={null}
         hasMore={true}
         onLoadMore={jest.fn()}
+        onPressDay={jest.fn()}
       />,
     );
 
@@ -228,9 +235,75 @@ describe('JourneyList', () => {
         errorMessage={null}
         hasMore={true}
         onLoadMore={mockOnLoadMore}
+        onPressDay={jest.fn()}
       />,
     );
 
     expect(mockOnLoadMore).toBeDefined();
+  });
+
+  it('calls onPressDay when day row is pressed', async () => {
+    const mockOnPressDay = jest.fn();
+    const day: JourneyDay = {
+      dateLocal: '2024-01-15',
+      points: [
+        {
+          id: '1',
+          latitude: 37.7749,
+          longitude: -122.4194,
+          recordedAt: '2024-01-15T10:00:00.000Z',
+          speedMps: null,
+          headingDeg: null,
+        },
+      ],
+    };
+
+    await render(
+      <JourneyList
+        days={[day]}
+        loading={false}
+        loadingMore={false}
+        errorMessage={null}
+        hasMore={true}
+        onLoadMore={jest.fn()}
+        onPressDay={mockOnPressDay}
+      />,
+    );
+
+    const dayRow = screen.getByLabelText(/Play back/);
+    fireEvent.press(dayRow);
+
+    expect(mockOnPressDay).toHaveBeenCalledWith(day);
+  });
+
+  it('day rows are pressable and have accessibility label', async () => {
+    const day: JourneyDay = {
+      dateLocal: '2024-01-15',
+      points: [
+        {
+          id: '1',
+          latitude: 37.7749,
+          longitude: -122.4194,
+          recordedAt: '2024-01-15T10:00:00.000Z',
+          speedMps: null,
+          headingDeg: null,
+        },
+      ],
+    };
+
+    await render(
+      <JourneyList
+        days={[day]}
+        loading={false}
+        loadingMore={false}
+        errorMessage={null}
+        hasMore={true}
+        onLoadMore={jest.fn()}
+        onPressDay={jest.fn()}
+      />,
+    );
+
+    const dayRow = screen.getByLabelText(/Play back Mon, Jan 15, 2024/);
+    expect(dayRow).toBeTruthy();
   });
 });

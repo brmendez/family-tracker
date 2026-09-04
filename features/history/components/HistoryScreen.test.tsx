@@ -15,13 +15,13 @@ jest.mock('../hooks/useJourneyHistory');
 jest.mock('./JourneyList', () => {
   const { Text, View } = require('react-native');
   return {
-    JourneyList: ({ errorMessage }: any) =>
+    JourneyList: ({ errorMessage, onPressDay }: any) =>
       errorMessage ? (
         <View testID="journey-list-error">
           <Text>{errorMessage}</Text>
         </View>
       ) : (
-        <View testID="journey-list" />
+        <View testID="journey-list" onPressDay={onPressDay} />
       ),
   };
 });
@@ -334,5 +334,36 @@ describe('HistoryScreen', () => {
 
     // The loadMore function should be available to JourneyList
     expect(screen.getByTestId('journey-list')).toBeTruthy();
+  });
+
+  it('passes onPressDay handler to JourneyList', async () => {
+    const mockDay = {
+      dateLocal: '2024-01-15',
+      points: [
+        {
+          id: '1',
+          latitude: 37.7749,
+          longitude: -122.4194,
+          recordedAt: '2024-01-15T10:00:00.000Z',
+          speedMps: null,
+          headingDeg: null,
+        },
+      ],
+    };
+
+    mockedUseJourneyHistory.mockReturnValue({
+      days: [mockDay],
+      loading: false,
+      loadingMore: false,
+      errorMessage: null,
+      hasMore: false,
+      loadMore: jest.fn(),
+    });
+
+    await render(<HistoryScreen />);
+
+    const journeyList = screen.getByTestId('journey-list');
+    expect(journeyList.props.onPressDay).toBeDefined();
+    expect(typeof journeyList.props.onPressDay).toBe('function');
   });
 });
