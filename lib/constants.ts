@@ -49,3 +49,8 @@ export const GEOFENCE_REGISTRATION_SUPPRESS_WINDOW_MS = 5000;
 // query, comfortably more than a normal day's worth of fixes, so most
 // "load more" taps span several real days.
 export const JOURNEY_HISTORY_PAGE_ROW_LIMIT = 500;
+
+// FT-23: fixed playback animation length regardless of point count or the
+// real day's span — long enough to visually track a route, short enough
+// not to feel tedious on a busy day.
+export const JOURNEY_PLAYBACK_ANIMATION_DURATION_MS = 20000;

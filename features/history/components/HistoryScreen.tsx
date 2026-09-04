@@ -1,4 +1,5 @@
 // features/history/components/HistoryScreen.tsx
+import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
@@ -6,6 +7,7 @@ import { useAuth } from '../../../context/auth.context';
 import { useGroupsContext } from '../../../context/groups.context';
 import { useGroupRoster } from '../hooks/useGroupRoster';
 import { useJourneyHistory } from '../hooks/useJourneyHistory';
+import type { JourneyDay } from '../types/history.types';
 import { JourneyList } from './JourneyList';
 import { MemberSelector } from './MemberSelector';
 
@@ -20,6 +22,7 @@ type HistoryScreenProps = {
 // resets on group switch (mirrors FT-12 edge case #4) rather than trying
 // to carry a selection across groups.
 export const HistoryScreen = ({ initialMemberId = null }: HistoryScreenProps) => {
+  const router = useRouter();
   const { userId } = useAuth();
   const { activeGroupId } = useGroupsContext();
   const { members, errorMessage: rosterErrorMessage } = useGroupRoster(activeGroupId);
@@ -42,6 +45,12 @@ export const HistoryScreen = ({ initialMemberId = null }: HistoryScreenProps) =>
   const { days, loading, loadingMore, errorMessage, hasMore, loadMore } =
     useJourneyHistory(effectiveSelectedId);
 
+  const handlePressDay = (day: JourneyDay) => {
+    router.push(
+      `/history/playback?memberId=${effectiveSelectedId}&date=${day.dateLocal}`,
+    );
+  };
+
   return (
     <View style={styles.container}>
       <MemberSelector
@@ -59,6 +68,7 @@ export const HistoryScreen = ({ initialMemberId = null }: HistoryScreenProps) =>
         errorMessage={errorMessage}
         hasMore={hasMore}
         onLoadMore={loadMore}
+        onPressDay={handlePressDay}
       />
     </View>
   );

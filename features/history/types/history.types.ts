@@ -17,3 +17,22 @@ export type JourneyDay = {
   dateLocal: string; // YYYY-MM-DD, device-local
   points: LocationHistoryPoint[];
 };
+
+// FT-23: one get_journey_playback_points row. Redacted rows arrive with
+// coordinates already nulled server-side — isRedacted is a display flag,
+// not the privacy boundary.
+export type PlaybackPoint = {
+  id: string;
+  recordedAt: string; // ISO string, from recorded_at
+  latitude: number | null;
+  longitude: number | null;
+  speedMps: number | null;
+  headingDeg: number | null;
+  isRedacted: boolean;
+};
+
+// A contiguous run of redacted points, collapsed by deriveRedactedWindows.
+export type RedactedWindow = {
+  startsAt: string;
+  endsAt: string;
+};

@@ -6,6 +6,8 @@ import { Pressable, StyleSheet, Text } from 'react-native';
 // Presented as a modal (see app/(app)/_layout.tsx's "history" Stack.Screen
 // entry, where presentation: 'modal' actually lives per native-stack
 // semantics) — "index" needs its own close button, same reason as Places.
+//
+// FT-23: adds "playback", same close-button convention as "index".
 const HistoryLayout = () => {
   const router = useRouter();
 
@@ -20,6 +22,10 @@ const HistoryLayout = () => {
       <Stack.Screen
         name="index"
         options={{ title: 'History', headerLeft: renderCloseButton }}
+      />
+      <Stack.Screen
+        name="playback"
+        options={{ title: 'Playback', headerLeft: renderCloseButton }}
       />
     </Stack>
   );

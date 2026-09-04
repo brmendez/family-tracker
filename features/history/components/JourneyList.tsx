@@ -1,5 +1,5 @@
 // features/history/components/JourneyList.tsx
-import { ActivityIndicator, FlatList, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { JourneyDay } from '../types/history.types';
 
@@ -10,6 +10,7 @@ type JourneyListProps = {
   errorMessage: string | null;
   hasMore: boolean;
   onLoadMore: () => void;
+  onPressDay: (day: JourneyDay) => void;
 };
 
 // dateLocal is "YYYY-MM-DD" — split and construct a local Date rather than
@@ -31,7 +32,7 @@ const formatPointCount = (count: number): string =>
   count === 1 ? '1 point' : `${count} points`;
 
 // FlatList of day sections, most recent first (days already arrive in that
-// order from useJourneyHistory). No route playback here — FT-23.
+// order from useJourneyHistory). Tapping a day opens FT-23's playback screen.
 export const JourneyList = ({
   days,
   loading,
@@ -39,6 +40,7 @@ export const JourneyList = ({
   errorMessage,
   hasMore,
   onLoadMore,
+  onPressDay,
 }: JourneyListProps) => {
   if (loading && days.length === 0 && !errorMessage) {
     return (
@@ -71,10 +73,14 @@ export const JourneyList = ({
       onEndReachedThreshold={0.5}
       onEndReached={onLoadMore}
       renderItem={({ item }) => (
-        <View style={styles.dayRow}>
+        <Pressable
+          style={styles.dayRow}
+          onPress={() => onPressDay(item)}
+          accessibilityLabel={`Play back ${formatDateLocal(item.dateLocal)}`}
+        >
           <Text style={styles.dayDate}>{formatDateLocal(item.dateLocal)}</Text>
           <Text style={styles.dayCount}>{formatPointCount(item.points.length)}</Text>
-        </View>
+        </Pressable>
       )}
       ListFooterComponent={
         loadingMore ? (
