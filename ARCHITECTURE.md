@@ -1465,7 +1465,7 @@ Index: `global_visibility_overrides_user_created_idx on (user_id, created_at des
 
 | Ticket | Description | Depends on | Status |
 |---|---|---|---|
-| FT-22 | Journey history list (paginated/infinite-scroll, grouped by day — no date-range picker per PO decision 2026-09-03), member selector (any group member, not just self, per #7) | FT-5, FT-12 | ⬜ |
+| FT-22 | Journey history list (paginated/infinite-scroll, grouped by day — no date-range picker per PO decision 2026-09-03), member selector (any group member, not just self, per #7) | FT-5, FT-12 | ✅ Done |
 | FT-23 | Route playback animation — redacts any time range where the viewed member was hidden (global or per-group) at that historical timestamp | FT-22, FT-19, FT-21 | ⬜ |
 
 ---
